@@ -137,7 +137,7 @@ kbd{font:inherit;font-size:11px;border:1px solid var(--line);border-radius:4px;p
     <button role="tab" data-tab="io">まとめて追加・書き出し</button>
   </nav>
   <main id="app"></main>
-  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19e（微生物・内科デッキ追加）</footer>
+  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19f（出題中に編集）</footer>
 </div>
 <div id="toast" class="toast" hidden></div>
 
@@ -549,6 +549,7 @@ function viewQuizMC(q,c){
     h("div",{class:"row"},
       h("span",{class:"hint"},done?[h("kbd",null,"Enter"),"で次へ"]:["数字キー（",h("kbd",null,"1"),"〜）で選ぶ"]),
       h("span",{class:"spacer"}),
+      h("button",{class:"btn small",onclick:function(){S.quizEdit=c.id;render();}},"このカードを編集"),
       h("button",{class:"btn small",onclick:function(){S.quiz=null;render();}},"やめる")));
 }
 function viewQuiz(){
@@ -564,6 +565,15 @@ function viewQuiz(){
   if(q.done)return quizResult();
   var id=q.queue[q.i],c=cardById(id);
   if(!c){q.i++;if(q.i>=q.queue.length)q.done=true;return viewQuiz();}
+  if(S.quizEdit===c.id){
+    return h("div",{class:"panel stack"},
+      h("div",{class:"prog"},h("span",null,(q.i+1)+" / "+q.queue.length+"　カードを編集中"),h("span",null,catOf(c))),
+      editItem(c,function(saved){
+        S.quizEdit=null;
+        if(saved){q.cur=null;q.picked=null;toast("保存しました");}
+        render();
+      }));
+  }
   if(useMC(c)){var mc=viewQuizMC(q,c);if(mc)return mc;}
   var rev=S.opts.reverse,front=rev?c.a:c.q,back=rev?c.q:c.a;
   var pct=Math.round(q.i/q.queue.length*100);
@@ -589,6 +599,7 @@ function viewQuiz(){
     h("div",{class:"row"},
       h("span",{class:"hint"},h("kbd",null,"Space"),"で答え　",h("kbd",null,"←"),"まだ　",h("kbd",null,"→"),"覚えた"),
       h("span",{class:"spacer"}),
+      h("button",{class:"btn small",onclick:function(){S.quizEdit=c.id;render();}},"このカードを編集"),
       h("button",{class:"btn small",onclick:function(){S.quiz=null;render();}},"やめる")));
 }
 function quizSetup(){
@@ -803,7 +814,8 @@ function viewItem(c){
       h("button",{class:"btn small",onclick:function(){S.editing=c.id;S.editNode=null;S.confirmKey=null;renderList();}},"編集"),
       delBtn));
 }
-function editItem(c){
+function editItem(c,onDone){
+  var done=onDone||function(){renderList();};
   var q=h("textarea",{rows:"2","aria-label":"質問"},c.q);
   var a=h("textarea",{rows:"2","aria-label":"答え"},c.a);
   var e=h("textarea",{rows:"3","aria-label":"解説",placeholder:"解説（任意）"},c.e);
@@ -833,10 +845,10 @@ function editItem(c){
         if(ng.join("\u0000")!==c.tags.join("\u0000")){c.tags=ng;c.tagSet=true;}
         c.q=nq;c.a=na;c.e=ne;c.tag=nt;c.imgs=ni;c.qimgs=nqi;
         picker.commit();qPicker.commit();
-        S.editing=null;S.editNode=null;persist();renderList();
+        S.editing=null;S.editNode=null;persist();done(true);
       }},"保存"),
       h("button",{class:"btn small",onclick:function(){
-        picker.discard();qPicker.discard();S.editing=null;S.editNode=null;renderList();
+        picker.discard();qPicker.discard();S.editing=null;S.editNode=null;done(false);
       }},"キャンセル")));
 }
 
@@ -1174,7 +1186,7 @@ function onCloudCards(list){
 function liveRender(){
   var ae=document.activeElement;
   var typing=ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)&&ae.type!=="checkbox"&&ae.type!=="file";
-  if(S.editing||typing||document.querySelector(".lightbox")){CL.pendingRender=true;setStatus();return;}
+  if(S.editing||S.quizEdit||typing||document.querySelector(".lightbox")){CL.pendingRender=true;setStatus();return;}
   CL.pendingRender=false;
   if(S.tab==="cards")renderList();
   else if(S.tab==="io")setStatus();
@@ -1324,11 +1336,11 @@ async function migrateLocal(btn){
 document.querySelectorAll("nav button").forEach(function(b){
   b.addEventListener("click",function(){
     if(S.editNode&&S.editing){/* leaving the tab discards an unsaved edit */S.editing=null;S.editNode=null;}
-    S.tab=b.dataset.tab;S.confirmKey=null;render();
+    S.tab=b.dataset.tab;S.confirmKey=null;S.quizEdit=null;render();
   });
 });
 document.addEventListener("keydown",function(e){
-  if(S.tab!=="quiz"||!S.quiz||S.quiz.done||!S.loaded)return;
+  if(S.tab!=="quiz"||!S.quiz||S.quiz.done||!S.loaded||S.quizEdit)return;
   if(document.querySelector(".lightbox"))return;
   var tg=e.target&&e.target.tagName;
   if(tg==="INPUT"||tg==="TEXTAREA"||tg==="SELECT")return;
