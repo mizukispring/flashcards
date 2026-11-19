@@ -137,7 +137,7 @@ kbd{font:inherit;font-size:11px;border:1px solid var(--line);border-radius:4px;p
     <button role="tab" data-tab="io">まとめて追加・書き出し</button>
   </nav>
   <main id="app"></main>
-  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19c（4択・共有モード対応）</footer>
+  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19d（自動4択・共有モード対応）</footer>
 </div>
 <div id="toast" class="toast" hidden></div>
 
@@ -149,9 +149,10 @@ var cloudReady=new Promise(function(r){window.__cloudResolve=r;});
 (function(){
 "use strict";
 var LS_KEY="ichimon-itto-v1";
+var savedMode="auto";try{savedMode=localStorage.getItem("ichimon-itto-mode")||"auto";}catch(e){}
 var MAX_IMGS=3;
 var S={cards:[],tab:"quiz",editing:null,editNode:null,search:"",tagFilter:"",quiz:null,
-  opts:{cats:[],tags:[],only:false,onlyNew:false,reverse:false,mc:false},tagFilterT:"",loaded:false,confirmKey:null};
+  opts:{cats:[],tags:[],only:false,onlyNew:false,reverse:false,mode:savedMode},tagFilterT:"",loaded:false,confirmKey:null};
 
 /* ---------- helpers ---------- */
 function h(tag,props){
@@ -481,20 +482,36 @@ function qImages(c){
   return c.qimgs.length?h("div",{class:"qimgs"},c.qimgs.map(function(id){return imgEl(id,"qimg");})):null;
 }
 /* options for the current question: [{text,right}] or null when not enough material */
+/* a one-word answer: short, no list punctuation (parenthesised notes are ignored) */
+function isShortAnswer(t){
+  t=String(t||"").replace(/（[^）]*）|\([^)]*\)/g,"").trim();
+  return t.length<=16&&!/[、，,。\n]/.test(t);
+}
+function useMC(c){
+  var m=S.opts.mode;
+  if(m==="mc")return true;
+  if(m==="recall")return false;
+  return !isShortAnswer(S.opts.reverse?c.q:c.a);
+}
 function buildChoices(c,rev){
   var right=rev?c.q:c.a,wrong=[];
   if(!rev&&c.choices.length)wrong=c.choices.slice(0,5);
   else{
+    /* prefer answers of cards that share tags and category, and that look alike in length */
     var seen={};seen[right]=1;
-    var same=[],other=[];
+    var cand=[];
     S.cards.forEach(function(x){
       if(x.id===c.id)return;
       var t=rev?x.q:x.a;
       if(!t||seen[t])return;seen[t]=1;
-      (catOf(x)===catOf(c)?same:other).push(t);
+      var sc=0;
+      x.tags.forEach(function(g){if(c.tags.indexOf(g)>=0)sc+=2;});
+      if(catOf(x)===catOf(c))sc+=3;
+      if(isShortAnswer(t)===isShortAnswer(right))sc+=1;
+      cand.push({t:t,sc:sc+Math.random()});
     });
-    wrong=shuffle(same).slice(0,3);
-    if(wrong.length<3)wrong=wrong.concat(shuffle(other).slice(0,3-wrong.length));
+    cand.sort(function(a,b){return b.sc-a.sc;});
+    wrong=shuffle(cand.slice(0,6)).slice(0,3).map(function(o){return o.t;});
   }
   if(!wrong.length)return null;
   return shuffle([{text:right,right:true}].concat(wrong.map(function(t){return {text:t,right:false};})));
@@ -547,7 +564,7 @@ function viewQuiz(){
   if(q.done)return quizResult();
   var id=q.queue[q.i],c=cardById(id);
   if(!c){q.i++;if(q.i>=q.queue.length)q.done=true;return viewQuiz();}
-  if(S.opts.mc){var mc=viewQuizMC(q,c);if(mc)return mc;}
+  if(useMC(c)){var mc=viewQuizMC(q,c);if(mc)return mc;}
   var rev=S.opts.reverse,front=rev?c.a:c.q,back=rev?c.q:c.a;
   var pct=Math.round(q.i/q.queue.length*100);
   return h("div",{class:"panel stack"},
@@ -617,10 +634,10 @@ function quizSetup(){
     h("label",{class:"check"},
       h("input",{type:"checkbox",checked:S.opts.reverse,onchange:function(e){S.opts.reverse=e.target.checked;render();}}),
       "答えから質問を当てる（逆出題）"),
-    h("label",{class:"check"},
-      h("input",{type:"checkbox",checked:S.opts.mc,onchange:function(e){S.opts.mc=e.target.checked;render();}}),
-      "選択肢から選んで答える（4択）"),
-    S.opts.mc?h("div",{class:"hint",style:"margin-top:-8px;padding-left:26px"},"選択肢を登録したカードはその選択肢を、それ以外は同じカテゴリのほかのカードの答えを誤答として出します。"):null,
+    h("label",{class:"field"},h("span",null,"答え方"),
+      h("select",{"aria-label":"答え方",onchange:function(e){S.opts.mode=e.target.value;try{localStorage.setItem("ichimon-itto-mode",S.opts.mode);}catch(x){}render();}},
+        [["auto","自動：答えが一言なら思い出す、長ければ4択"],["mc","すべて4択"],["recall","すべて思い出す（4択なし）"]].map(function(o){
+          var el=h("option",{value:o[0]},o[1]);if(S.opts.mode===o[0])el.selected=true;return el;}))),
     h("button",{class:"btn primary",disabled:n===0,onclick:function(){startQuiz();}},
       n===0?"出題できるカードがありません":"スタート（"+n+"問）"));
 }
@@ -1300,7 +1317,8 @@ document.addEventListener("keydown",function(e){
   if(tg==="INPUT"||tg==="TEXTAREA"||tg==="SELECT")return;
   if(e.ctrlKey||e.metaKey||e.altKey)return;
   var q=S.quiz;
-  if(S.opts.mc&&q.opts&&q.cur===q.queue[q.i]){
+  var cc=cardById(q.queue[q.i]);
+  if(cc&&useMC(cc)&&q.opts&&q.cur===q.queue[q.i]){
     if(q.picked==null){
       var n=parseInt(e.key,10);
       if(n>=1&&n<=q.opts.length){e.preventDefault();pickChoice(n-1);}
