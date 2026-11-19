@@ -159,7 +159,7 @@ kbd{font:inherit;font-size:11px;border:1px solid var(--line);border-radius:4px;p
     <button role="tab" data-tab="io">まとめて追加・書き出し</button>
   </nav>
   <main id="app"></main>
-  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19g（問題OK・出題回数・正解演出）</footer>
+  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19h（本質！演出・オンオフ）</footer>
 </div>
 <div id="toast" class="toast" hidden></div>
 
@@ -173,8 +173,9 @@ var cloudReady=new Promise(function(r){window.__cloudResolve=r;});
 var LS_KEY="ichimon-itto-v1";
 var savedMode="auto";try{savedMode=localStorage.getItem("ichimon-itto-mode")||"auto";}catch(e){}
 var savedSfx=true;try{savedSfx=localStorage.getItem("ichimon-itto-sfx")!=="0";}catch(e){}
+var savedFx=true;try{savedFx=localStorage.getItem("ichimon-itto-fx")!=="0";}catch(e){}
 var MAX_IMGS=3;
-var S={sfx:savedSfx,cards:[],tab:"quiz",editing:null,editNode:null,search:"",tagFilter:"",quiz:null,
+var S={sfx:savedSfx,fx:savedFx,cards:[],tab:"quiz",editing:null,editNode:null,search:"",tagFilter:"",quiz:null,
   opts:{cats:[],tags:[],only:false,onlyNew:false,reverse:false,mode:savedMode,order:"random",exam:0,review:""},tagFilterT:"",loaded:false,confirmKey:null};
 
 /* ---------- helpers ---------- */
@@ -623,9 +624,10 @@ function chime(streak){
 var WORDS=["正解！","いいね！","その調子！","さすが！","完璧！"];
 function celebrate(streak,big){
   chime(streak);
+  if(!S.fx)return;
   try{if(navigator.vibrate)navigator.vibrate(streak>=5?[30,40,30,40,60]:35);}catch(e){}
   var box=h("div",{class:"celebrate","aria-hidden":"true"});
-  var word=streak>=10?"神！":streak>=5?"絶好調！":WORDS[Math.floor(Math.random()*WORDS.length)];
+  var word="本質！";
   box.append(h("div",{class:"ring"}),h("div",{class:"pop"},word,streak>=2?h("small",null,"🔥 "+streak+"問連続"):null));
   var colors=["#ffd43b","#ff6b6b","#51cf66","#339af0","#cc5de8","#ff922b","#22b8cf"];
   var n=big?(streak>=5?110:70):(streak>=5?80:45);
@@ -771,6 +773,9 @@ function quizSetup(){
         selectEl([["0","すべて"],["1","1回以上出た"],["2","2回以上出た"],["3","3回以上出た"]],String(S.opts.exam),function(v){S.opts.exam=+v;render();})),
       h("label",{class:"field",style:"flex:1 1 150px"},h("span",null,"問題チェック"),
         selectEl([["","すべて"],["unchecked","未チェックだけ（見直し用）"],["checked","問題OKだけ"]],S.opts.review,function(v){S.opts.review=v;render();}))),
+    h("label",{class:"check"},
+      h("input",{type:"checkbox",checked:S.fx,onchange:function(e){S.fx=e.target.checked;try{localStorage.setItem("ichimon-itto-fx",S.fx?"1":"0");}catch(x){}}}),
+      "正解したときの演出（「本質！」と紙吹雪）"),
     h("label",{class:"check"},
       h("input",{type:"checkbox",checked:S.sfx,onchange:function(e){S.sfx=e.target.checked;try{localStorage.setItem("ichimon-itto-sfx",S.sfx?"1":"0");}catch(x){}}}),
       "正解したときの効果音"),
