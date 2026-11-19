@@ -102,6 +102,9 @@ textarea{resize:vertical;min-height:84px}
 .chip.checked{color:var(--ok);border:1px solid var(--ok);background:transparent}
 .goodbtn{appearance:none;font:inherit;font-size:13px;border:1px solid var(--line);background:var(--card);color:var(--mute);
   border-radius:999px;padding:4px 12px;cursor:pointer}
+.badbtn{appearance:none;font:inherit;font-size:13px;border:1px solid var(--line);background:var(--card);color:var(--mute);
+  border-radius:999px;padding:4px 12px;cursor:pointer}
+.badbtn.armed{border-color:var(--ng);color:#fff;background:var(--ng);font-weight:700}
 .goodbtn[aria-pressed="true"]{border-color:var(--ok);color:var(--ok);font-weight:700;background:color-mix(in srgb,var(--ok) 10%,var(--card))}
 .streak{font-weight:700;color:#d9480f}
 .celebrate{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
@@ -159,7 +162,7 @@ kbd{font:inherit;font-size:11px;border:1px solid var(--line);border-radius:4px;p
     <button role="tab" data-tab="io">まとめて追加・書き出し</button>
   </nav>
   <main id="app"></main>
-  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19h（本質！演出・オンオフ）</footer>
+  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19i（不適ボタン）</footer>
 </div>
 <div id="toast" class="toast" hidden></div>
 
@@ -250,6 +253,34 @@ function toggleChecked(c){
   c.checked=!c.checked;
   c.checkedBy=c.checked?(S.mode==="cloud"&&CL.user?(CL.user.name||CL.user.email):"自分"):"";
   persist();
+}
+/* "不適" = the card is judged unsuitable and is deleted (two taps to confirm) */
+function badButton(c,onDeleted,compact){
+  var label=compact?"👎":"👎 不適（削除）";
+  var b=h("button",{class:"badbtn",title:"問題として不適切なら押す（もう一度押すと削除）"},label);
+  var armed=false,timer=null;
+  b.addEventListener("click",function(){
+    if(!armed){
+      armed=true;b.classList.add("armed");
+      b.textContent=S.mode==="cloud"?"全員から削除する":"本当に削除";
+      timer=setTimeout(function(){armed=false;b.classList.remove("armed");b.textContent=label;},3500);
+      return;
+    }
+    clearTimeout(timer);
+    removeCard(c);persist();
+    toast("不適として削除しました"+(c.src?"（デッキを取り込み直しても戻りません）":""));
+    onDeleted();
+  });
+  return b;
+}
+function rejectInQuiz(c){
+  var q=S.quiz;if(!q)return;
+  var k=q.queue.indexOf(c.id);
+  if(k>=0)q.queue.splice(k,1);
+  q.again=q.again.filter(function(x){return x!==c.id;});
+  q.cur=null;q.opts=null;q.picked=null;q.shown=false;q.mcJudged=false;
+  if(q.i>=q.queue.length)q.done=true;
+  render();
 }
 function goodButton(c,after){
   var b=h("button",{class:"goodbtn","aria-pressed":c.checked?"true":"false",title:"問題として適切かを確認したら押す"},
@@ -670,7 +701,7 @@ function viewQuizMC(q,c){
       rev?h("div",{class:"atext"},c.q):null,
       rev?qImages(c):null,
       explanation(c),
-      h("div",{class:"row",style:"margin-top:12px"},goodButton(c),statsChip(c))):null,
+      h("div",{class:"row",style:"margin-top:12px"},goodButton(c),badButton(c,function(){rejectInQuiz(c);}),statsChip(c))):null,
     done?h("div",{class:"row"},
       h("button",{class:"btn primary big",onclick:function(){answer(correct);}},"次へ →"),
       h("button",{class:"btn small",title:"判定を逆にして次へ",onclick:function(){answer(!correct);}},correct?"まだにする":"覚えたにする")):null,
@@ -719,7 +750,7 @@ function viewQuiz(){
         h("div",{class:"atext"},back),
         rev?qImages(c):null,
         explanation(c),
-        h("div",{class:"row",style:"margin-top:12px"},goodButton(c),statsChip(c))):null),
+        h("div",{class:"row",style:"margin-top:12px"},goodButton(c),badButton(c,function(){rejectInQuiz(c);}),statsChip(c))):null),
     q.shown?
       h("div",{class:"row"},
         h("button",{class:"btn ng big",onclick:function(){answer(false);}},"まだ ←"),
@@ -971,6 +1002,7 @@ function viewItem(c){
       h("span",{class:"spacer"}),
       h("button",{class:"goodbtn","aria-pressed":c.checked?"true":"false",title:"問題として適切かを確認したら押す",
         onclick:function(){toggleChecked(c);renderList();}},c.checked?"✓":"👍"),
+      badButton(c,function(){renderList();},true),
       h("button",{class:"btn small",onclick:function(){S.editing=c.id;S.editNode=null;S.confirmKey=null;renderList();}},"編集"),
       delBtn));
 }
