@@ -761,8 +761,10 @@ async function importDeck(d,btn){
       var sid=typeof c.id==="string"?c.id:"";
       var q=c.q.trim(),a=c.a.trim(),e=String(c.e||"").trim(),cat=String(c.cat||c.tag||deck.cat||deck.tag||"").trim();
       var tg=cleanTags(c.tags);
-      var hit=(sid&&bySrc[sid])||byKey[q+"\u0000"+a]||byQ[q]||null;
-      if(!hit&&Array.isArray(c.was))for(var j=0;j<c.was.length&&!hit;j++)hit=byQ[c.was[j]]||null;
+      /* text matches only count for cards that are not already tied to another deck card */
+      function free(x){return x&&!(sid&&x.src&&x.src!==sid)?x:null;}
+      var hit=(sid&&bySrc[sid])||free(byKey[q+"\u0000"+a])||free(byQ[q])||null;
+      if(!hit&&Array.isArray(c.was))for(var j=0;j<c.was.length&&!hit;j++)hit=free(byQ[c.was[j]]);
       if(!hit&&sid&&dismissed[sid]){skip++;continue;}   /* deleted by the user: do not bring back */
       if(hit){
         if(sid)hit.src=sid;
