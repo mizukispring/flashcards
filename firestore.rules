@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 管理者のメールアドレス（firebase-config.js の FLASHCARD_ADMIN_EMAILS と同じもの）
+    function admins() { return ['ADMIN_EMAIL']; }
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function isAdmin() { return signedIn() && myEmail() in admins(); }
+    function isMember() {
+      return isAdmin() || (signedIn() &&
+        exists(/databases/$(database)/documents/config/members) &&
+        myEmail() in get(/databases/$(database)/documents/config/members).data.emails);
+    }
+
+    // 招待メンバーの一覧：メンバーは読めて、変更は管理者だけ
+    match /config/members {
+      allow read: if isMember();
+      allow write: if isAdmin();
+    }
+    // 共有カード：メンバー全員が読み書きできる
+    match /cards/{cardId} {
+      allow read, write: if isMember();
+    }
+    // 共有画像（1枚あたり約1MBまで）
+    match /images/{imageId} {
+      allow read, delete: if isMember();
+      allow create, update: if isMember() && request.resource.data.data is string
+                            && request.resource.data.data.size() < 1048000;
+    }
+    // デッキの取り込み設定など
+    match /meta/{name} {
+      allow read, write: if isMember();
+    }
+    // 各自の学習記録（覚えた・まだ）：本人だけ
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+  }
+}

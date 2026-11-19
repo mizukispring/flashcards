@@ -82,6 +82,9 @@ textarea{resize:vertical;min-height:84px}
 .newbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--chip);border-radius:10px;padding:10px 12px;font-size:14px}
 .item.flag{border-left:4px solid #d9480f}
 .item.flag.upd{border-left-color:#1971c2}
+.acct{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.acct .who{font-size:14px}
+.status.cloud{color:var(--accent);font-weight:600}
 .chip.tag:hover{border-color:var(--mute)}
 .grouphead{font-size:13px;font-weight:600;color:var(--mute);margin:18px 0 8px;letter-spacing:.04em}
 .imgs{display:flex;flex-direction:column;gap:10px;margin-top:12px}
@@ -127,6 +130,10 @@ kbd{font:inherit;font-size:11px;border:1px solid var(--line);border-radius:4px;p
 </div>
 <div id="toast" class="toast" hidden></div>
 
+<script src="firebase-config.js"></script>
+<script>
+var cloudReady=new Promise(function(r){window.__cloudResolve=r;});
+</script>
 <script>
 (function(){
 "use strict";
@@ -169,7 +176,9 @@ function toast(msg){
 }
 function setStatus(){
   var el=document.getElementById("status");
-  el.textContent=!S.loaded?"読み込み中…":"この端末のブラウザに保存・"+S.cards.length+"枚";
+  var cloud=S.mode==="cloud";
+  el.className="status"+(cloud?" cloud":"");
+  el.textContent=!S.loaded?"読み込み中…":(cloud?"共有モード・":"この端末のみ・")+S.cards.length+"枚";
 }
 function idList(v){return Array.isArray(v)?v.filter(function(x){return typeof x==="string"&&/^[A-Za-z0-9_-]{1,64}$/.test(x);}).slice(0,MAX_IMGS):[];}
 function sanitize(c){
@@ -185,7 +194,7 @@ function badgeEl(c){
   if(!c.badge)return null;
   return c.badge==="new"?h("span",{class:"badge"},"NEW"):h("span",{class:"badge upd"},(c.changed.length?c.changed.join("・"):"内容")+"を更新");
 }
-function clearBadge(c){if(c.badge){c.badge="";c.changed=[];}}
+function clearBadge(c){if(c.badge){if(S.mode==="cloud")CL.seenDirty[c.id]=Date.now();c.badge="";c.changed=[];}}
 function cleanTags(v){
   if(typeof v==="string")v=parseTags(v);
   if(!Array.isArray(v))return [];
@@ -213,9 +222,13 @@ var dismissed={};
 function readDismissed(){
   try{var d=JSON.parse(localStorage.getItem(DIS_KEY)||"[]");if(Array.isArray(d))d.forEach(function(k){if(typeof k==="string")dismissed[k]=1;});}catch(e){}
 }
-function saveDismissed(){try{localStorage.setItem(DIS_KEY,JSON.stringify(Object.keys(dismissed)));}catch(e){}}
+function saveDismissed(){
+  if(S.mode==="cloud"){cloudWrite(CL.api.setMeta("deck",{dismissed:Object.keys(dismissed)}));return;}
+  try{localStorage.setItem(DIS_KEY,JSON.stringify(Object.keys(dismissed)));}catch(e){}
+}
 var lsWarned=false;
 function persist(){
+  if(S.mode==="cloud"){persistCloud();return;}
   try{localStorage.setItem(LS_KEY,JSON.stringify(S.cards));}
   catch(e){if(!lsWarned){lsWarned=true;toast("この端末に保存できませんでした（容量不足の可能性）");}}
   setStatus();
@@ -243,8 +256,39 @@ function idbReq(mode,fn){
     tx.onerror=tx.onabort=function(){rej(tx.error||new Error("idb"));};
   });
 }
-function imgPut(id,blob){return idbReq("readwrite",function(s){return s.put(blob,id);});}
-function imgGet(id){return idbReq("readonly",function(s){return s.get(id);});}
+function imgPutLocal(id,blob){return idbReq("readwrite",function(s){return s.put(blob,id);});}
+function imgPut(id,blob){
+  return imgPutLocal(id,blob).then(function(){
+    if(S.mode!=="cloud")return;
+    return blobToDataURL(blob).then(fitDataURL).then(function(u){return CL.api.putImage(id,u,CL.user.uid);})
+      .catch(function(e){toast("画像を共有に保存できませんでした");throw e;});
+  });
+}
+function imgGetLocal(id){return idbReq("readonly",function(s){return s.get(id);});}
+function imgGet(id){
+  return imgGetLocal(id).catch(function(){return null;}).then(function(b){
+    if(b||S.mode!=="cloud")return b;
+    return CL.api.getImage(id).then(function(u){
+      if(!u)return null;
+      return dataURLToBlob(u).then(function(bb){return imgPutLocal(id,bb).catch(function(){}).then(function(){return bb;});});
+    }).catch(function(){return null;});
+  });
+}
+/* Firestore documents are limited to 1 MiB: re-encode images that are too large */
+function fitDataURL(u){
+  if(u.length<900000)return Promise.resolve(u);
+  return new Promise(function(res){
+    var im=new Image();
+    im.onload=function(){
+      var w=im.naturalWidth,hh=im.naturalHeight,sc=Math.min(1,900/Math.max(w,hh));
+      var cv=document.createElement("canvas");cv.width=Math.round(w*sc);cv.height=Math.round(hh*sc);
+      var cx=cv.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,cv.width,cv.height);cx.drawImage(im,0,0,cv.width,cv.height);
+      res(cv.toDataURL("image/jpeg",0.7));
+    };
+    im.onerror=function(){res(u);};
+    im.src=u;
+  });
+}
 function imgDelRaw(id){return idbReq("readwrite",function(s){return s.delete(id);});}
 function imgClear(){return idbReq("readwrite",function(s){return s.clear();});}
 function imgKeys(){return idbReq("readonly",function(s){return s.getAllKeys();});}
@@ -257,28 +301,33 @@ function imgURL(id){
     return urlCache[id];
   }).catch(function(){return null;});
 }
-function imgDel(id){
+function imgDelLocal(id){
   if(urlCache[id]){try{URL.revokeObjectURL(urlCache[id]);}catch(e){}delete urlCache[id];}
   return idbReq("readwrite",function(s){return s.delete(id);}).catch(function(){});
 }
+function imgDel(id){
+  if(S.mode==="cloud")CL.api.deleteImage(id).catch(function(){});
+  return imgDelLocal(id);
+}
+/* only this device's cache is cleaned: images of this device's own cards and of shared cards are kept */
 function gcImages(){
   if(!idb)return;
   var used={};
-  S.cards.forEach(function(c){allImgs(c).forEach(function(id){used[id]=1;});});
+  S.cards.concat(readLocal()).forEach(function(c){allImgs(c).forEach(function(id){used[id]=1;});});
   imgKeys().then(function(keys){
-    (keys||[]).forEach(function(k){if(!used[k])imgDel(k);});
+    (keys||[]).forEach(function(k){if(!used[k])imgDelLocal(k);});
   }).catch(function(){});
 }
 function compress(file){
   return new Promise(function(res,rej){
     var url=URL.createObjectURL(file),im=new Image();
     im.onload=function(){
-      var max=1280,w=im.naturalWidth,hh=im.naturalHeight;
+      var max=1100,w=im.naturalWidth,hh=im.naturalHeight;
       if(!w||!hh){URL.revokeObjectURL(url);rej(new Error("dec"));return;}
       var sc=Math.min(1,max/Math.max(w,hh)),cw=Math.round(w*sc),ch=Math.round(hh*sc);
       var cv=document.createElement("canvas");cv.width=cw;cv.height=ch;
       var cx=cv.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,cw,ch);cx.drawImage(im,0,0,cw,ch);
-      cv.toBlob(function(b){URL.revokeObjectURL(url);b?res(b):rej(new Error("enc"));},"image/jpeg",0.82);
+      cv.toBlob(function(b){URL.revokeObjectURL(url);b?res(b):rej(new Error("enc"));},"image/jpeg",0.8);
     };
     im.onerror=function(){URL.revokeObjectURL(url);rej(new Error("dec"));};
     im.src=url;
@@ -633,6 +682,7 @@ function viewItem(c){
     })):null,
     h("div",{class:"meta"},
       h("span",{class:"chip"+(c.known?" ok":"")},c.known?"覚えた":"まだ"),
+      S.mode==="cloud"&&c.by?h("span",{class:"chip",title:"このカードを追加した人"},"追加："+c.by):null,
       c.tags.map(function(t){return h("button",{class:"chip tag",type:"button",title:"このタグで絞り込む",onclick:function(){
         S.tagFilterT=t;render();}},"#"+t);}),
       h("span",{class:"spacer"}),
@@ -913,7 +963,7 @@ function viewIO(){
   });
   var expBtn=h("button",{class:"btn",onclick:function(){exportFile(expBtn);}},"画像つきでファイルに書き出す");
   var delKey="all";
-  var delAll=h("button",{class:"btn danger"},"すべてのカードを削除");
+  var delAll=h("button",{class:"btn danger"},S.mode==="cloud"?"共有カードをすべて削除（全員から消えます）":"すべてのカードを削除");
   delAll.addEventListener("click",function(){
     if(S.confirmKey===delKey){
       S.cards=[];S.quiz=null;S.confirmKey=null;dismissed={};saveDismissed();
@@ -926,6 +976,7 @@ function viewIO(){
     }
   });
   return h("div",{class:"stack"},
+    accountPanel(),
     deckPanel(),
     h("div",{class:"panel stack"},
       h("h2",null,"まとめて追加"),
@@ -962,7 +1013,192 @@ function viewIO(){
           jsonIn.value="";setStatus();toast(n+"枚追加しました");
         }catch(e){toast("読み込めませんでした。データを確認してください");}
       }},"追加する")),
-    h("div",{class:"panel stack"},h("h2",null,"データの削除"),delAll));
+    (S.mode!=="cloud"||CL.admin)?h("div",{class:"panel stack"},h("h2",null,"データの削除"),delAll):null);
+}
+
+/* ---------- shared mode (Firebase) ---------- */
+var CL={api:null,user:null,member:false,admin:false,state:{known:{},seen:{},baseline:0},
+  docs:{},synced:{},seenDirty:{},unsub:null,localDismissed:null,pendingRender:false,status:"init"};
+var SHARED=["q","a","e","tag","tags","imgs","qimgs","src","edited","catSet","tagSet"];
+function sharedKey(c){var o={};SHARED.forEach(function(k){o[k]=c[k];});return JSON.stringify(o);}
+var writeWarned=0;
+function cloudWrite(p){
+  return Promise.resolve(p).catch(function(e){
+    if(Date.now()-writeWarned>5000){writeWarned=Date.now();
+      toast(e&&e.code==="permission-denied"?"共有データを変更する権限がありません":"共有データへの保存に失敗しました（オフラインなら、つながったときに送られます）");}
+  });
+}
+function cloudBadge(d){
+  var none={badge:"",changed:[]};
+  if(!CL.user)return none;
+  var seen=CL.state.seen[d.id]||0,base=CL.state.baseline||0,me=CL.user.uid;
+  if(d.updatedBy===me)return none;
+  if((d.createdAt||0)>base&&!seen&&d.createdBy!==me)return {badge:"new",changed:[]};
+  if((d.updatedAt||0)>Math.max(base,seen)&&Array.isArray(d.lastChange)&&d.lastChange.length)return {badge:"upd",changed:d.lastChange.slice(0,5)};
+  return none;
+}
+function fromDoc(d){
+  var c=sanitize({id:d.id,q:d.q,a:d.a,e:d.e,tag:d.cat,tags:d.tags,imgs:d.imgs,qimgs:d.qimgs,src:d.src,
+    edited:d.edited,catSet:d.catSet,tagSet:d.tagSet});
+  c.known=CL.state.known[d.id]===true;
+  var b=cloudBadge(d);c.badge=b.badge;c.changed=b.changed;
+  c.by=d.createdByName||"";
+  return c;
+}
+function onCloudCards(list){
+  CL.status="ready";
+  CL.docs={};CL.synced={};
+  list.sort(function(x,y){return (y.createdAt||0)-(x.createdAt||0);});
+  var cards=list.map(function(d){CL.docs[d.id]=d;var c=fromDoc(d);CL.synced[d.id]=sharedKey(c);return c;});
+  S.cards=cards;S.loaded=true;
+  liveRender();
+}
+function liveRender(){
+  var ae=document.activeElement;
+  var typing=ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)&&ae.type!=="checkbox"&&ae.type!=="file";
+  if(S.editing||typing||document.querySelector(".lightbox")){CL.pendingRender=true;setStatus();return;}
+  CL.pendingRender=false;
+  if(S.tab==="cards")renderList();
+  else if(S.tab==="io")setStatus();
+  else render();
+  setStatus();
+}
+document.addEventListener("focusout",function(){if(CL.pendingRender)setTimeout(liveRender,250);});
+function persistCloud(){
+  setStatus();
+  if(!CL.user)return;
+  var now=Date.now(),u=CL.user,present={};
+  S.cards.forEach(function(c){
+    present[c.id]=1;
+    var k=sharedKey(c);
+    if(CL.synced[c.id]===k)return;
+    var prev=CL.docs[c.id],lc=[];
+    if(prev){
+      if(prev.q!==c.q)lc.push("質問");
+      if(prev.a!==c.a)lc.push("答え");
+      if((prev.e||"")!==c.e)lc.push("解説");
+      if(JSON.stringify(prev.imgs||[])!==JSON.stringify(c.imgs)||JSON.stringify(prev.qimgs||[])!==JSON.stringify(c.qimgs))lc.push("画像");
+    }
+    var data={q:c.q,a:c.a,e:c.e,cat:c.tag,tags:c.tags,imgs:c.imgs,qimgs:c.qimgs,src:c.src,
+      edited:c.edited,catSet:c.catSet,tagSet:c.tagSet,
+      createdAt:prev&&prev.createdAt||now,createdBy:prev&&prev.createdBy||u.uid,createdByName:prev?(prev.createdByName||""):(u.name||u.email),
+      updatedAt:now,updatedBy:u.uid,updatedByName:u.name||u.email,lastChange:lc};
+    CL.synced[c.id]=k;CL.docs[c.id]=Object.assign({id:c.id},data);
+    if(!prev)c.by=data.createdByName;
+    cloudWrite(CL.api.writeCard(c.id,data));
+  });
+  Object.keys(CL.synced).forEach(function(id){
+    if(present[id])return;
+    delete CL.synced[id];delete CL.docs[id];
+    cloudWrite(CL.api.deleteCard(id));
+  });
+  var patch=null;
+  S.cards.forEach(function(c){
+    var kv=c.known===true;
+    if((CL.state.known[c.id]===true)!==kv){patch=patch||{};patch.known=patch.known||{};patch.known[c.id]=kv;CL.state.known[c.id]=kv;}
+  });
+  Object.keys(CL.seenDirty).forEach(function(id){
+    patch=patch||{};patch.seen=patch.seen||{};patch.seen[id]=CL.seenDirty[id];CL.state.seen[id]=CL.seenDirty[id];
+  });
+  CL.seenDirty={};
+  if(patch)cloudWrite(CL.api.setUserState(u.uid,patch));
+}
+async function enterCloud(){
+  S.mode="cloud";S.loaded=false;S.quiz=null;S.editing=null;S.editNode=null;CL.status="loading";
+  render();
+  try{
+    var st=await CL.api.getUserState(CL.user.uid)||{};
+    var base=st.baseline;
+    if(!base){base=Date.now();cloudWrite(CL.api.setUserState(CL.user.uid,{baseline:base}));}
+    CL.state={known:st.known||{},seen:st.seen||{},baseline:base};
+    var meta=null;try{meta=await CL.api.getMeta("deck");}catch(e){}
+    CL.localDismissed=dismissed;dismissed={};
+    if(meta&&Array.isArray(meta.dismissed))meta.dismissed.forEach(function(k){dismissed[k]=1;});
+  }catch(e){
+    S.mode="local";S.cards=readLocal();S.loaded=true;CL.status="error";
+    toast("共有データを読み込めませんでした");render();return;
+  }
+  var timer=setTimeout(function(){if(CL.status==="loading"){toast("共有データの読み込みに時間がかかっています");}},10000);
+  CL.unsub=CL.api.subscribeCards(function(list){clearTimeout(timer);if(S.mode==="cloud")onCloudCards(list);},
+    function(e){clearTimeout(timer);CL.status="error";toast(e&&e.code==="permission-denied"?"共有カードを見る権限がありません":"共有データとの接続が切れました");});
+}
+function leaveCloud(){
+  if(CL.unsub){try{CL.unsub();}catch(e){}CL.unsub=null;}
+  if(S.mode==="cloud"){
+    S.mode="local";S.quiz=null;S.editing=null;S.editNode=null;
+    if(CL.localDismissed){dismissed=CL.localDismissed;CL.localDismissed=null;}
+    S.cards=readLocal();S.loaded=true;
+  }
+  CL.docs={};CL.synced={};CL.status="init";
+}
+async function onAuthChange(user){
+  CL.user=user;CL.member=false;CL.admin=false;
+  if(!user){leaveCloud();render();return;}
+  CL.admin=CL.api.isAdmin(user);
+  CL.member=await CL.api.checkMember(user);
+  if(CL.member&&S.mode!=="cloud")await enterCloud();
+  else if(!CL.member){leaveCloud();render();}
+}
+function accountPanel(){
+  var api=CL.api;
+  if(!api||!api.configured)return null;
+  var box=h("div",{class:"panel stack"},h("h2",null,"共有モード"));
+  if(api.failed){box.append(h("p",{class:"hint",style:"margin:0"},"共有サーバーに接続できません。オフラインの可能性があります。いまは、この端末のカードを表示しています。"));return box;}
+  if(!CL.user){
+    box.append(h("p",{class:"hint",style:"margin:0"},"招待されたメンバーはGoogleアカウントでログインすると、みんなで同じカードを使えます。「覚えた・まだ」は人ごとに分かれ、同じアカウントならスマホとPCで同期されます。"),
+      h("button",{class:"btn primary",onclick:function(){
+        api.signIn().catch(function(e){toast("ログインできませんでした"+(e&&e.code?"（"+e.code+"）":""));});
+      }},"Googleでログイン"));
+    return box;
+  }
+  var who=h("div",{class:"acct"},h("span",{class:"who"},CL.user.email),
+    CL.admin?h("span",{class:"chip ok"},"管理者"):null,h("span",{class:"spacer"}),
+    h("button",{class:"btn small",onclick:function(){api.signOut();}},"ログアウト"));
+  box.append(who);
+  if(!CL.member){
+    box.append(h("p",{class:"hint",style:"margin:0"},"このアカウントはまだ招待されていません。管理者に、上のメールアドレスを伝えてください。いまは、この端末のカードを表示しています。"));
+    return box;
+  }
+  box.append(h("p",{class:"hint",style:"margin:0"},"共有カードを表示しています。追加・編集・削除はメンバー全員に反映されます。ログアウトすると、この端末だけのカードに戻ります。"));
+  var local=readLocal();
+  if(local.length){
+    var mb=h("button",{class:"btn"},"この端末のカード（"+local.length+"枚）を共有に追加");
+    mb.addEventListener("click",function(){migrateLocal(mb);});
+    box.append(h("div",null,mb,h("div",{class:"hint",style:"margin-top:4px"},"同じ内容のカードは追加されません。「覚えた」の記録も引き継ぎます。")));
+  }
+  if(CL.admin)box.append(membersEditor());
+  return box;
+}
+function membersEditor(){
+  var ta=h("textarea",{rows:"5",placeholder:"招待する人のGoogleアカウントのメールアドレスを1行に1つ","aria-label":"メンバーのメールアドレス"});
+  var note=h("div",{class:"hint"},"読み込み中…");
+  CL.api.getMembers().then(function(list){ta.value=list.join("\n");note.textContent="メンバー："+list.length+"人（管理者は自動で含まれます）";})
+    .catch(function(){note.textContent="まだメンバーはいません";});
+  return h("div",{class:"stack"},h("h2",{style:"margin-top:8px"},"メンバーの招待（管理者のみ）"),ta,note,
+    h("button",{class:"btn",onclick:function(){
+      var list=ta.value.split(/[\s,、]+/).filter(function(x){return /@/.test(x);});
+      CL.api.setMembers(list).then(function(saved){ta.value=saved.join("\n");note.textContent="保存しました。メンバー："+saved.length+"人";})
+        .catch(function(){toast("保存できませんでした");});
+    }},"保存"));
+}
+async function migrateLocal(btn){
+  btn.disabled=true;
+  var local=readLocal(),have={},byKey={},add=[],knownN=0;
+  S.cards.forEach(function(c){if(c.src)have["s:"+c.src]=c;byKey[c.q+"\u0000"+c.a]=c;});
+  for(var i=0;i<local.length;i++){
+    var c=local[i];
+    var hit=(c.src&&have["s:"+c.src])||byKey[c.q+"\u0000"+c.a];
+    if(hit){if(c.known&&!hit.known){hit.known=true;knownN++;}continue;}
+    var ids=allImgs(c);
+    for(var j=0;j<ids.length;j++){
+      try{var b=await imgGetLocal(ids[j]);if(b)await imgPut(ids[j],b);}catch(e){}
+    }
+    c.badge="";c.changed=[];
+    add.push(c);byKey[c.q+"\u0000"+c.a]=c;
+  }
+  S.cards=add.concat(S.cards);
+  persist();render();
+  toast(add.length+"枚を共有に追加しました"+(knownN?"（"+knownN+"枚の「覚えた」を引き継ぎ）":""));
 }
 
 /* ---------- events ---------- */
@@ -993,9 +1229,16 @@ render();
   S.loaded=true;
   render();
   gcImages();
+  var api=await Promise.race([cloudReady,new Promise(function(r){setTimeout(function(){r(null);},12000);})]);
+  if(!api||!api.configured)return;
+  CL.api=api;
+  if(api.failed){if(S.tab==="io")render();return;}
+  api.onAuth(function(u){onAuthChange(u).catch(function(){});});
+  if(S.tab==="io")render();
 })();
 })();
 </script>
+<script type="module" src="cloud.js"></script>
 <script>
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", function () {
