@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // 管理者のメールアドレス（firebase-config.js の FLASHCARD_ADMIN_EMAILS と同じもの）
-    function admins() { return ['ADMIN_EMAIL']; }
+    function admins() { return ['mizukiazu98@gmail.com']; }
 
     function signedIn() {
       return request.auth != null && request.auth.token.email_verified == true;

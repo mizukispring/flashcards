@@ -8,4 +8,4 @@ window.FIREBASE_CONFIG = {
   appId: "1:276766734938:web:0f809685e11fce08493663"
 };
 // 管理者（メンバーを招待できる人）のGoogleアカウントのメールアドレス
-window.FLASHCARD_ADMIN_EMAILS = [];
+window.FLASHCARD_ADMIN_EMAILS = ["mizukiazu98@gmail.com"];
