@@ -405,6 +405,56 @@ function addSamples(){
   persist();render();toast("サンプルを3枚追加しました");
 }
 
+/* --- decks (bundled in the same site) --- */
+function deckPanel(){
+  var list=h("div",{class:"stack"},h("div",{class:"hint"},"読み込み中…"));
+  var box=h("div",{class:"panel stack"},
+    h("h2",null,"デッキから追加"),
+    h("p",{class:"hint",style:"margin:0"},"Claudeに作ってもらったデッキを、ボタン1つで取り込めます。すでにあるカードは重複して追加されません。"),
+    list);
+  function say(msg){list.textContent="";list.append(h("div",{class:"hint"},msg));}
+  fetch("decks/index.json",{cache:"no-store"}).then(function(r){
+    if(!r.ok)throw new Error("http");return r.json();
+  }).then(function(decks){
+    if(!Array.isArray(decks)||!decks.length){say("デッキはまだありません。");return;}
+    list.textContent="";
+    decks.forEach(function(d){
+      if(!d||typeof d.file!=="string"||!/^[A-Za-z0-9._-]+\.json$/.test(d.file))return;
+      var btn=h("button",{class:"btn small primary"},"取り込む");
+      btn.addEventListener("click",function(){importDeck(d,btn);});
+      list.append(h("div",{class:"item"},
+        h("div",{class:"q"},String(d.title||d.file)),
+        d.description?h("div",{class:"a"},String(d.description)):null,
+        h("div",{class:"meta"},
+          typeof d.count==="number"?h("span",{class:"chip"},d.count+"枚"):null,
+          h("span",{class:"spacer"}),btn)));
+    });
+  }).catch(function(){say("デッキ一覧を読み込めませんでした（オフライン、または公開サイト以外で開いています）。");});
+  return box;
+}
+function importDeck(d,btn){
+  btn.disabled=true;
+  fetch("decks/"+d.file,{cache:"no-store"}).then(function(r){
+    if(!r.ok)throw new Error("http");return r.json();
+  }).then(function(deck){
+    var src=Array.isArray(deck.cards)?deck.cards:[];
+    var seen={};
+    S.cards.forEach(function(c){seen[c.q+"\u0000"+c.a]=1;});
+    var add=[],dup=0;
+    src.forEach(function(c){
+      if(!c||typeof c.q!=="string"||typeof c.a!=="string"||!c.q.trim()||!c.a.trim())return;
+      var q=c.q.trim(),a=c.a.trim(),k=q+"\u0000"+a;
+      if(seen[k]){dup++;return;}
+      seen[k]=1;
+      add.push({id:uid(),q:q,a:a,tag:String(c.tag||deck.tag||"").trim(),known:false});
+    });
+    S.cards=add.concat(S.cards);
+    persist();setStatus();
+    toast(add.length+"枚追加しました"+(dup?"（"+dup+"枚は取り込み済み）":""));
+  }).catch(function(){toast("デッキを取り込めませんでした");})
+  .then(function(){btn.disabled=false;});
+}
+
 /* --- import / export --- */
 function parseBulk(text,tag){
   var out=[],skipped=0;
@@ -437,6 +487,7 @@ function viewIO(){
     }
   });
   return h("div",{class:"stack"},
+    deckPanel(),
     h("div",{class:"panel stack"},
       h("h2",null,"まとめて追加"),
       h("p",{class:"hint",style:"margin:0"},"1行に1枚。質問と答えを「|」またはタブで区切ります。"),
