@@ -137,7 +137,7 @@ kbd{font:inherit;font-size:11px;border:1px solid var(--line);border-radius:4px;p
     <button role="tab" data-tab="io">まとめて追加・書き出し</button>
   </nav>
   <main id="app"></main>
-  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19d（自動4択・共有モード対応）</footer>
+  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19e（微生物・内科デッキ追加）</footer>
 </div>
 <div id="toast" class="toast" hidden></div>
 
@@ -618,13 +618,7 @@ function quizSetup(){
     h("div",null,
       h("div",{class:"hint",style:"margin-bottom:6px"},"カテゴリ（複数選べます）"),
       h("div",{class:"cats"},allBtn,chips)),
-    tagList().length?h("div",null,
-      h("div",{class:"hint",style:"margin-bottom:6px"},"タグで絞り込む（どれかが付いたカード）"),
-      h("div",{class:"cats"},tagList().map(function(t){
-        return h("button",{class:"catbtn tagbtn","aria-pressed":S.opts.tags.indexOf(t)>=0?"true":"false",onclick:function(){
-          var i=S.opts.tags.indexOf(t);if(i<0)S.opts.tags.push(t);else S.opts.tags.splice(i,1);render();
-        }},"#"+t,h("small",null,tcounts[t]));
-      }))):null,
+    quizTagChips(),
     h("label",{class:"check"},
       h("input",{type:"checkbox",checked:S.opts.only,onchange:function(e){S.opts.only=e.target.checked;render();}}),
       "「まだ」のカードだけ出す"),
@@ -640,6 +634,29 @@ function quizSetup(){
           var el=h("option",{value:o[0]},o[1]);if(S.opts.mode===o[0])el.selected=true;return el;}))),
     h("button",{class:"btn primary",disabled:n===0,onclick:function(){startQuiz();}},
       n===0?"出題できるカードがありません":"スタート（"+n+"問）"));
+}
+/* tags of the cards in the selected categories, most used first; long lists fold */
+function quizTagChips(){
+  var m={};
+  S.cards.forEach(function(c){
+    if(S.opts.cats.length&&S.opts.cats.indexOf(catOf(c))<0)return;
+    c.tags.forEach(function(t){m[t]=(m[t]||0)+1;});
+  });
+  S.opts.tags.forEach(function(t){if(!m[t])m[t]=0;});
+  var list=Object.keys(m).sort(function(a,b){
+    var sa=S.opts.tags.indexOf(a)>=0?1:0,sb=S.opts.tags.indexOf(b)>=0?1:0;
+    return sb-sa||m[b]-m[a]||a.localeCompare(b,"ja");});
+  if(!list.length)return null;
+  var LIMIT=18,more=list.length>LIMIT&&!S.tagsOpen,shown=more?list.slice(0,LIMIT):list;
+  return h("div",null,
+    h("div",{class:"hint",style:"margin-bottom:6px"},"タグで絞り込む（どれかが付いたカード）"+(S.opts.cats.length?"：選んだカテゴリのタグ":"")),
+    h("div",{class:"cats"},shown.map(function(t){
+      return h("button",{class:"catbtn tagbtn","aria-pressed":S.opts.tags.indexOf(t)>=0?"true":"false",onclick:function(){
+        var i=S.opts.tags.indexOf(t);if(i<0)S.opts.tags.push(t);else S.opts.tags.splice(i,1);render();
+      }},"#"+t,h("small",null,m[t]));
+    }),
+    list.length>LIMIT?h("button",{class:"catbtn tagbtn",onclick:function(){S.tagsOpen=!S.tagsOpen;render();}},
+      S.tagsOpen?"たたむ":"ほか"+(list.length-LIMIT)+"個のタグ"):null));
 }
 function quizResult(){
   var q=S.quiz,total=q.queue.length;
