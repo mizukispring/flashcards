@@ -166,7 +166,7 @@ function sanitize(c){
   return {id:typeof c.id==="string"&&c.id?c.id:uid(),
     q:String(c.q==null?"":c.q),a:String(c.a==null?"":c.a),e:String(c.e==null?"":c.e),
     tag:String(c.tag==null?"":c.tag).trim(),known:c.known===true,imgs:idList(c.imgs),qimgs:idList(c.qimgs),
-    src:typeof c.src==="string"?c.src:""};
+    src:typeof c.src==="string"?c.src:"",edited:c.edited===true,catSet:c.catSet===true};
 }
 function allImgs(c){return (c.qimgs||[]).concat(c.imgs||[]);}
 function catOf(c){return c.tag||"未分類";}
@@ -179,6 +179,13 @@ function readLocal(){
   try{var raw=localStorage.getItem(LS_KEY);if(!raw)return [];
     var d=JSON.parse(raw);return Array.isArray(d)?d.map(sanitize):[];}catch(e){return [];}
 }
+/* deck cards the user deleted: re-importing a deck must not bring them back */
+var DIS_KEY="ichimon-itto-dismissed-v1";
+var dismissed={};
+function readDismissed(){
+  try{var d=JSON.parse(localStorage.getItem(DIS_KEY)||"[]");if(Array.isArray(d))d.forEach(function(k){if(typeof k==="string")dismissed[k]=1;});}catch(e){}
+}
+function saveDismissed(){try{localStorage.setItem(DIS_KEY,JSON.stringify(Object.keys(dismissed)));}catch(e){}}
 var lsWarned=false;
 function persist(){
   try{localStorage.setItem(LS_KEY,JSON.stringify(S.cards));}
@@ -461,6 +468,7 @@ function quizResult(){
 
 /* --- cards --- */
 function removeCard(c){
+  if(c.src){dismissed[c.src]=1;saveDismissed();}
   allImgs(c).forEach(function(id){imgDel(id);});
   S.cards=S.cards.filter(function(x){return x.id!==c.id;});
 }
@@ -584,7 +592,10 @@ function editItem(c){
       h("button",{class:"btn small primary",onclick:function(){
         var nq=q.value.trim(),na=a.value.trim();
         if(!nq||!na){toast("質問と答えの両方を入力してください");return;}
-        c.q=nq;c.a=na;c.e=e.value.trim();c.tag=t.value.trim();c.imgs=picker.ids();c.qimgs=qPicker.ids();
+        var ne=e.value.trim(),nt=t.value.trim(),ni=picker.ids(),nqi=qPicker.ids();
+        if(nq!==c.q||na!==c.a||ne!==c.e||ni.join()!==c.imgs.join()||nqi.join()!==c.qimgs.join())c.edited=true;
+        if(nt!==c.tag)c.catSet=true;
+        c.q=nq;c.a=na;c.e=ne;c.tag=nt;c.imgs=ni;c.qimgs=nqi;
         picker.commit();qPicker.commit();
         S.editing=null;S.editNode=null;persist();renderList();
       }},"保存"),
@@ -604,7 +615,7 @@ function renamePanel(){
     h("button",{class:"btn",onclick:function(){
       var from=sel.value,nn=to.value.trim();
       if(!from||!nn||nn===from){toast("新しい名前を入力してください");return;}
-      var n=0;S.cards.forEach(function(c){if(c.tag===from){c.tag=nn;n++;}});
+      var n=0;S.cards.forEach(function(c){if(c.tag===from){c.tag=nn;c.catSet=true;n++;}});
       if(S.tagFilter===from)S.tagFilter=nn;
       persist();render();toast(n+"枚のカテゴリを「"+nn+"」にしました");
     }},"変更する"));
@@ -615,8 +626,13 @@ function deckPanel(){
   var list=h("div",{class:"stack"},h("div",{class:"hint"},"読み込み中…"));
   var box=h("div",{class:"panel stack"},
     h("h2",null,"デッキから追加"),
-    h("p",{class:"hint",style:"margin:0"},"Claudeに作ってもらったデッキを、ボタン1つで取り込めます。取り込み済みのカードは学習状況を保ったまま最新の内容に更新され、デッキから外されたカードは削除されます。"),
-    list);
+    h("p",{class:"hint",style:"margin:0"},"Claudeに作ってもらったデッキを、ボタン1つで取り込めます。取り込み済みのカードは学習状況を保ったまま最新の内容に更新されます。自分で削除したカードは復活せず、自分で編集したカードは上書きされません。"),
+    list,
+    Object.keys(dismissed).length?h("div",{class:"row"},
+      h("span",{class:"hint"},"削除したデッキのカード："+Object.keys(dismissed).length+"枚"),
+      h("button",{class:"btn small",onclick:function(){
+        dismissed={};saveDismissed();render();toast("次にデッキを取り込むと、削除したカードも戻ります");
+      }},"次の取り込みで戻す")):null);
   function say(msg){list.textContent="";list.append(h("div",{class:"hint"},msg));}
   fetch("decks/index.json",{cache:"no-store"}).then(function(r){
     if(!r.ok)throw new Error("http");return r.json();
@@ -659,7 +675,7 @@ async function importDeck(d,btn){
     var src=Array.isArray(deck.cards)?deck.cards:[];
     var bySrc={},byQ={},byKey={};
     S.cards.forEach(function(c){if(c.src)bySrc[c.src]=c;byQ[c.q]=byQ[c.q]||c;byKey[c.q+"\u0000"+c.a]=c;});
-    var add=[],upd=0,same=0,del=0;
+    var add=[],upd=0,same=0,del=0,kept=0,skip=0;
     for(var i=0;i<src.length;i++){
       var c=src[i];
       if(!validCard(c))continue;
@@ -667,9 +683,15 @@ async function importDeck(d,btn){
       var q=c.q.trim(),a=c.a.trim(),e=String(c.e||"").trim(),cat=String(c.cat||c.tag||deck.cat||deck.tag||"").trim();
       var hit=(sid&&bySrc[sid])||byKey[q+"\u0000"+a]||byQ[q]||null;
       if(!hit&&Array.isArray(c.was))for(var j=0;j<c.was.length&&!hit;j++)hit=byQ[c.was[j]]||null;
+      if(!hit&&sid&&dismissed[sid]){skip++;continue;}   /* deleted by the user: do not bring back */
       if(hit){
-        var changed=hit.q!==q||hit.a!==a||hit.e!==e||hit.tag!==cat;
-        hit.q=q;hit.a=a;hit.e=e;hit.tag=cat;if(sid)hit.src=sid;
+        if(sid)hit.src=sid;
+        if(hit.edited){                                  /* edited by the user: keep their version */
+          if(!hit.catSet&&hit.tag!==cat){hit.tag=cat;}
+          kept++;continue;
+        }
+        var changed=hit.q!==q||hit.a!==a||hit.e!==e||(!hit.catSet&&hit.tag!==cat);
+        hit.q=q;hit.a=a;hit.e=e;if(!hit.catSet)hit.tag=cat;
         if(!hit.qimgs.length&&Array.isArray(c.qimg)&&c.qimg.length){hit.qimgs=await deckImages(c.qimg);changed=true;}
         if(!hit.imgs.length&&Array.isArray(c.img)&&c.img.length){hit.imgs=await deckImages(c.img);changed=true;}
         if(changed)upd++;else same++;
@@ -685,7 +707,7 @@ async function importDeck(d,btn){
     if(gone.length){
       var keep=[];
       S.cards.forEach(function(c){
-        if((c.src&&gone.indexOf(c.src)>=0)||gone.indexOf(c.q)>=0){allImgs(c).forEach(function(id){imgDel(id);});del++;}
+        if(!c.edited&&((c.src&&gone.indexOf(c.src)>=0)||gone.indexOf(c.q)>=0)){allImgs(c).forEach(function(id){imgDel(id);});del++;}
         else keep.push(c);
       });
       S.cards=keep;
@@ -695,6 +717,8 @@ async function importDeck(d,btn){
     var parts=[add.length+"枚追加"];
     if(upd)parts.push(upd+"枚を更新");
     if(del)parts.push(del+"枚を削除");
+    if(kept)parts.push(kept+"枚は編集済みのため保持");
+    if(skip)parts.push(skip+"枚は削除済みのため除外");
     if(same)parts.push(same+"枚は変更なし");
     toast(parts.join("・"));
   }catch(e){toast("デッキを取り込めませんでした");}
@@ -736,6 +760,7 @@ async function importList(list){
     if(!validCard(c))continue;
     added.push({id:uid(),q:c.q.trim(),a:c.a.trim(),e:String(c.e||"").trim(),
       tag:String(c.tag||c.cat||"").trim(),known:c.known===true,src:typeof c.src==="string"?c.src:"",
+      edited:c.edited===true,catSet:c.catSet===true,
       imgs:await dataImgs(c.imgs),qimgs:await dataImgs(c.qimgs)});
   }
   S.cards=S.cards.concat(added);
@@ -761,9 +786,9 @@ async function exportFile(btn){
         var b2=await imgGet(c.qimgs[k]).catch(function(){return null;});
         if(b2)qimgs.push(await blobToDataURL(b2));
       }
-      out.push({q:c.q,a:c.a,e:c.e,tag:c.tag,known:c.known,src:c.src,imgs:imgs,qimgs:qimgs});
+      out.push({q:c.q,a:c.a,e:c.e,tag:c.tag,known:c.known,src:c.src,edited:c.edited,catSet:c.catSet,imgs:imgs,qimgs:qimgs});
     }
-    var blob=new Blob([JSON.stringify({app:"ichimon-itto",version:2,cards:out})],{type:"application/json"});
+    var blob=new Blob([JSON.stringify({app:"ichimon-itto",version:3,cards:out,dismissed:Object.keys(dismissed)})],{type:"application/json"});
     var url=URL.createObjectURL(blob);
     var a=h("a",{href:url,download:"ichimon-itto-backup.json"});
     document.body.append(a);a.click();a.remove();
@@ -783,7 +808,9 @@ function viewIO(){
     var f=fileIn.files&&fileIn.files[0];fileIn.value="";
     if(!f)return;
     try{
-      var n=await importList(extractList(JSON.parse(await f.text())));
+      var parsed=JSON.parse(await f.text());
+      if(parsed&&Array.isArray(parsed.dismissed)){parsed.dismissed.forEach(function(k){if(typeof k==="string")dismissed[k]=1;});saveDismissed();}
+      var n=await importList(extractList(parsed));
       if(!n)throw new Error("empty");
       setStatus();toast(n+"枚を読み込みました");
     }catch(e){toast("読み込めませんでした。バックアップのファイルを確認してください");}
@@ -793,7 +820,7 @@ function viewIO(){
   var delAll=h("button",{class:"btn danger"},"すべてのカードを削除");
   delAll.addEventListener("click",function(){
     if(S.confirmKey===delKey){
-      S.cards=[];S.quiz=null;S.confirmKey=null;
+      S.cards=[];S.quiz=null;S.confirmKey=null;dismissed={};saveDismissed();
       Object.keys(urlCache).forEach(function(k){try{URL.revokeObjectURL(urlCache[k]);}catch(e){}delete urlCache[k];});
       if(idb)imgClear().catch(function(){});
       persist();render();toast("すべて削除しました");
@@ -866,6 +893,7 @@ render();
 (async function(){
   idb=await openIDB();
   S.cards=readLocal();
+  readDismissed();
   S.loaded=true;
   render();
   gcImages();
