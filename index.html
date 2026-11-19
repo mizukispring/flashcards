@@ -138,6 +138,21 @@ details.adv summary::-webkit-details-marker{display:none}
 details.adv summary::before{content:"▸ ";}
 details.adv[open] summary::before{content:"▾ ";}
 details.adv>.stack{margin-top:14px}
+/* glowing screen edges while on a streak (3+) */
+#edgeGlow{position:fixed;inset:0;pointer-events:none;z-index:35;transition:opacity .4s}
+#edgeGlow::before,#edgeGlow::after{content:"";position:absolute;inset:0}
+#edgeGlow.lv1::before{box-shadow:inset 0 0 14px 4px rgba(255,212,59,.85),inset 0 0 46px 12px rgba(255,212,59,.35);animation:edgepulse 1.6s ease-in-out infinite}
+#edgeGlow.lv2::before{box-shadow:inset 0 0 18px 6px rgba(255,146,43,.95),inset 0 0 70px 18px rgba(255,107,107,.45);animation:edgepulse .9s ease-in-out infinite}
+#edgeGlow.lv3::before{box-shadow:inset 0 0 22px 8px rgba(255,80,80,1),inset 0 0 90px 24px rgba(204,93,232,.55);animation:edgepulse .6s ease-in-out infinite,hue 2.4s linear infinite}
+#edgeGlow.lv3::after{background:linear-gradient(90deg,transparent,rgba(255,255,255,.18),transparent);background-size:200% 100%;
+  animation:sweep 1.8s linear infinite;mask:linear-gradient(#000,#000) top/100% 6px no-repeat,linear-gradient(#000,#000) bottom/100% 6px no-repeat;
+  -webkit-mask:linear-gradient(#000,#000) top/100% 6px no-repeat,linear-gradient(#000,#000) bottom/100% 6px no-repeat}
+#edgeGlow .lvtag{position:absolute;top:8px;left:50%;transform:translateX(-50%);font-size:12px;font-weight:800;color:#fff;background:rgba(217,72,15,.9);
+  padding:2px 9px;border-radius:999px;letter-spacing:.04em}
+@keyframes edgepulse{0%,100%{opacity:.55}50%{opacity:1}}
+@keyframes hue{to{filter:hue-rotate(360deg)}}
+@keyframes sweep{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){#edgeGlow::before,#edgeGlow::after{animation:none!important}}
 .grouphead{font-size:13px;font-weight:600;color:var(--mute);margin:18px 0 8px;letter-spacing:.04em}
 .imgs{display:flex;flex-direction:column;gap:10px;margin-top:12px}
 .qimg{display:block;max-width:100%;max-height:340px;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;background:#fff}
@@ -179,7 +194,7 @@ kbd{font:inherit;font-size:11px;border:1px solid var(--line);border-radius:4px;p
     <button role="tab" data-tab="io">まとめて追加・書き出し</button>
   </nav>
   <main id="app"></main>
-  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19k（シンプルな出題画面・当たり音）</footer>
+  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19l（連続正解で画面のふちが光る）</footer>
 </div>
 <div id="toast" class="toast" hidden></div>
 
@@ -562,7 +577,18 @@ function normCard(c){
   if(!Array.isArray(c.choices))c.choices=[];
   if(!Array.isArray(c.tags))c.tags=[];
 }
+function updateGlow(){
+  var q=S.quiz,st=q&&!q.done&&S.tab==="quiz"&&S.loaded?q.streak||0:0;
+  var el=document.getElementById("edgeGlow");
+  if(!S.fx||st<3){if(el)el.remove();return;}
+  var lv=st>=10?3:st>=5?2:1;
+  if(!el){el=h("div",{id:"edgeGlow","aria-hidden":"true"});document.body.append(el);}
+  el.className="lv"+lv;
+  el.textContent="";
+  el.append(h("span",{class:"lvtag"},lv===3?"🌈 "+st+"連続":lv===2?"🔥 "+st+"連続":"✨ "+st+"連続"));
+}
 function render(){
+  setTimeout(updateGlow,0);
   S.cards.forEach(normCard);
   setStatus();
   document.querySelectorAll("nav button").forEach(function(b){
