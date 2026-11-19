@@ -1,4 +1,4 @@
-const CACHE = "ichimon-itto-shell-v17";
+const CACHE = "ichimon-itto-shell-v18";
 const SHELL = ["./", "index.html", "manifest.json", "icon-180.png", "icon-192.png", "icon-512.png", "cloud.js", "firebase-config.js"];
 self.addEventListener("install", (e) => {
   e.waitUntil(

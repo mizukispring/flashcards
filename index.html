@@ -162,7 +162,7 @@ kbd{font:inherit;font-size:11px;border:1px solid var(--line);border-radius:4px;p
     <button role="tab" data-tab="io">まとめて追加・書き出し</button>
   </nav>
   <main id="app"></main>
-  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19i（不適ボタン）</footer>
+  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19j（カードごとの出題形式）</footer>
 </div>
 <div id="toast" class="toast" hidden></div>
 
@@ -226,6 +226,7 @@ function sanitize(c){
     tag:String(c.tag==null?"":c.tag).trim(),known:c.known===true,imgs:idList(c.imgs),qimgs:idList(c.qimgs),
     src:typeof c.src==="string"?c.src:"",edited:c.edited===true,catSet:c.catSet===true,
     tags:cleanTags(c.tags),tagSet:c.tagSet===true,choices:cleanChoices(c.choices,c.a),
+    fmt:c.fmt==="mc"||c.fmt==="recall"?c.fmt:"",
     checked:c.checked===true,checkedBy:typeof c.checkedBy==="string"?c.checkedBy.slice(0,60):"",
     stats:{n:(c.stats&&+c.stats.n>0)?Math.floor(+c.stats.n):0,ok:(c.stats&&+c.stats.ok>0)?Math.floor(+c.stats.ok):0},
     badge:c.badge==="new"||c.badge==="upd"?c.badge:"",changed:Array.isArray(c.changed)?c.changed.filter(function(x){return typeof x==="string";}).slice(0,5):[]};
@@ -272,6 +273,18 @@ function badButton(c,onDeleted,compact){
     onDeleted();
   });
   return b;
+}
+/* per-card answer format, switchable in the middle of a quiz (only used in the 自動 mode) */
+function fmtButton(c){
+  if(S.opts.mode!=="auto")return null;
+  var mc=useMC(c);
+  return h("button",{class:"btn small",title:"このカードの答え方を変える（次からも同じ形式で出題）",onclick:function(){
+    c.fmt=mc?"recall":"mc";persist();
+    var q=S.quiz;if(q){q.cur=null;q.opts=null;q.picked=null;q.shown=false;q.mcJudged=false;}
+    if(!mc&&!buildChoices(c,S.opts.reverse))toast("選択肢を作れないため一問一答のままです。編集で誤答を追加してください");
+    else toast(mc?"このカードは一問一答で出題します":"このカードは4択で出題します");
+    render();
+  }},mc?"一問一答にする":"4択にする");
 }
 function rejectInQuiz(c){
   var q=S.quiz;if(!q)return;
@@ -527,6 +540,7 @@ var app=document.getElementById("app");
 function normCard(c){
   if(!c.stats||typeof c.stats!=="object")c.stats={n:0,ok:0};
   if(typeof c.checked!=="boolean")c.checked=false;
+  if(c.fmt!=="mc"&&c.fmt!=="recall")c.fmt="";
   if(typeof c.checkedBy!=="string")c.checkedBy="";
   if(!Array.isArray(c.choices))c.choices=[];
   if(!Array.isArray(c.tags))c.tags=[];
@@ -603,6 +617,8 @@ function useMC(c){
   var m=S.opts.mode;
   if(m==="mc")return true;
   if(m==="recall")return false;
+  if(c.fmt==="mc")return true;
+  if(c.fmt==="recall")return false;
   return !isShortAnswer(S.opts.reverse?c.q:c.a);
 }
 function buildChoices(c,rev){
@@ -708,6 +724,7 @@ function viewQuizMC(q,c){
     h("div",{class:"row"},
       h("span",{class:"hint"},done?[h("kbd",null,"Enter"),"で次へ"]:["数字キー（",h("kbd",null,"1"),"〜）で選ぶ"]),
       h("span",{class:"spacer"}),
+      fmtButton(c),
       h("button",{class:"btn small",onclick:function(){S.quizEdit=c.id;render();}},"このカードを編集"),
       h("button",{class:"btn small",onclick:function(){S.quiz=null;render();}},"やめる")));
 }
@@ -760,6 +777,7 @@ function viewQuiz(){
     h("div",{class:"row"},
       h("span",{class:"hint"},h("kbd",null,"Space"),"で答え　",h("kbd",null,"←"),"まだ　",h("kbd",null,"→"),"覚えた"),
       h("span",{class:"spacer"}),
+      fmtButton(c),
       h("button",{class:"btn small",onclick:function(){S.quizEdit=c.id;render();}},"このカードを編集"),
       h("button",{class:"btn small",onclick:function(){S.quiz=null;render();}},"やめる")));
 }
@@ -996,6 +1014,7 @@ function viewItem(c){
       h("span",{class:"chip"+(c.known?" ok":"")},c.known?"覚えた":"まだ"),
       S.mode==="cloud"&&c.by?h("span",{class:"chip",title:"このカードを追加した人"},"追加："+c.by):null,
       examChip(c),statsChip(c),
+      c.fmt?h("span",{class:"chip"},c.fmt==="mc"?"4択で出題":"一問一答で出題"):null,
       c.checked?h("span",{class:"chip checked",title:c.checkedBy?"確認した人："+c.checkedBy:""},"✓ 問題OK"):null,
       c.tags.map(function(t){return h("button",{class:"chip tag",type:"button",title:"このタグで絞り込む",onclick:function(){
         S.tagFilterT=t;render();}},"#"+t);}),
@@ -1012,6 +1031,7 @@ function editItem(c,onDone){
   var a=h("textarea",{rows:"2","aria-label":"答え"},c.a);
   var e=h("textarea",{rows:"3","aria-label":"解説",placeholder:"解説（任意）"},c.e);
   var ch=h("textarea",{rows:"3","aria-label":"誤答の選択肢",placeholder:"誤答の選択肢（1行に1つ）"},c.choices.join("\n"));
+  var fm=selectEl([["","自動（答えの長さで決める）"],["mc","4択で出題"],["recall","一問一答で出題"]],c.fmt||"",function(){});
   var t=h("input",{type:"text",value:c.tag,placeholder:"カテゴリ","aria-label":"カテゴリ",list:"taglist"});
   var g=h("input",{type:"text",value:c.tags.join(" "),placeholder:"タグ（スペース区切り）","aria-label":"タグ"});
   var qPicker=imagePicker(c.qimgs);
@@ -1022,6 +1042,7 @@ function editItem(c,onDone){
     h("div",{class:"hint"},"答え"),a,
     h("div",{class:"hint"},"解説"),e,
     h("div",{class:"hint"},"誤答の選択肢（1行に1つ・空欄なら自動）"),ch,
+    h("div",{class:"hint"},"出題形式（答え方が「自動」のときに使われます）"),fm,
     h("div",{class:"hint"},"解説の画像"),picker.el,
     h("div",{class:"hint"},"カテゴリ"),t,
     h("div",{class:"hint"},"タグ（スペース区切り）"),g,
@@ -1031,7 +1052,7 @@ function editItem(c,onDone){
         if(!nq||!na){toast("質問と答えの両方を入力してください");return;}
         var ne=e.value.trim(),nt=t.value.trim(),ni=picker.ids(),nqi=qPicker.ids(),nch=cleanChoices(ch.value,na);
         if(nq!==c.q||na!==c.a||ne!==c.e||ni.join()!==c.imgs.join()||nqi.join()!==c.qimgs.join()||nch.join("\u0000")!==c.choices.join("\u0000"))c.edited=true;
-        c.choices=nch;
+        c.choices=nch;c.fmt=fm.value;
         if(nt!==c.tag)c.catSet=true;
         var ng=cleanTags(g.value);
         if(ng.join("\u0000")!==c.tags.join("\u0000")){c.tags=ng;c.tagSet=true;}
@@ -1229,6 +1250,7 @@ async function importList(list){
       tag:String(c.tag||c.cat||"").trim(),known:c.known===true,src:typeof c.src==="string"?c.src:"",
       edited:c.edited===true,catSet:c.catSet===true,tags:cleanTags(c.tags),tagSet:c.tagSet===true,choices:cleanChoices(c.choices,c.a),
       checked:c.checked===true,checkedBy:typeof c.checkedBy==="string"?c.checkedBy:"",stats:c.stats,
+      fmt:c.fmt==="mc"||c.fmt==="recall"?c.fmt:"",
       badge:c.badge==="new"||c.badge==="upd"?c.badge:"",changed:Array.isArray(c.changed)?c.changed:[],
       imgs:await dataImgs(c.imgs),qimgs:await dataImgs(c.qimgs)});
   }
@@ -1255,7 +1277,7 @@ async function exportFile(btn){
         var b2=await imgGet(c.qimgs[k]).catch(function(){return null;});
         if(b2)qimgs.push(await blobToDataURL(b2));
       }
-      out.push({q:c.q,a:c.a,e:c.e,tag:c.tag,known:c.known,src:c.src,edited:c.edited,catSet:c.catSet,tags:c.tags,tagSet:c.tagSet,choices:c.choices,checked:c.checked,checkedBy:c.checkedBy,stats:c.stats,badge:c.badge,changed:c.changed,imgs:imgs,qimgs:qimgs});
+      out.push({q:c.q,a:c.a,e:c.e,tag:c.tag,known:c.known,src:c.src,edited:c.edited,catSet:c.catSet,tags:c.tags,tagSet:c.tagSet,choices:c.choices,checked:c.checked,checkedBy:c.checkedBy,stats:c.stats,fmt:c.fmt,badge:c.badge,changed:c.changed,imgs:imgs,qimgs:qimgs});
     }
     var blob=new Blob([JSON.stringify({app:"ichimon-itto",version:3,cards:out,dismissed:Object.keys(dismissed)})],{type:"application/json"});
     var url=URL.createObjectURL(blob);
@@ -1340,7 +1362,7 @@ function viewIO(){
 }
 
 /* ---------- shared mode (Firebase) ---------- */
-var CL={api:null,user:null,member:false,admin:false,state:{known:{},seen:{},stats:{},baseline:0},
+var CL={api:null,user:null,member:false,admin:false,state:{known:{},seen:{},stats:{},fmt:{},baseline:0},
   docs:{},synced:{},seenDirty:{},unsub:null,localDismissed:null,pendingRender:false,status:"init"};
 var SHARED=["q","a","e","tag","tags","imgs","qimgs","src","edited","catSet","tagSet","choices","checked","checkedBy"];
 function sharedKey(c){var o={};SHARED.forEach(function(k){o[k]=c[k];});return JSON.stringify(o);}
@@ -1368,6 +1390,7 @@ function fromDoc(d){
   c.by=d.createdByName||"";
   c.checked=d.checked===true;c.checkedBy=d.checkedBy||"";
   var st=CL.state.stats&&CL.state.stats[d.id];c.stats={n:st&&st.n||0,ok:st&&st.ok||0};
+  c.fmt=CL.state.fmt&&CL.state.fmt[d.id]||"";
   return c;
 }
 function onCloudCards(list){
@@ -1427,6 +1450,10 @@ function persistCloud(){
     var st=CL.state.stats[c.id]||{n:0,ok:0};
     if(st.n!==c.stats.n||st.ok!==c.stats.ok){patch=patch||{};patch.stats=patch.stats||{};patch.stats[c.id]={n:c.stats.n,ok:c.stats.ok};CL.state.stats[c.id]={n:c.stats.n,ok:c.stats.ok};}
   });
+  S.cards.forEach(function(c){
+    var f=CL.state.fmt[c.id]||"";
+    if(f!==(c.fmt||"")){patch=patch||{};patch.fmt=patch.fmt||{};patch.fmt[c.id]=c.fmt||"";CL.state.fmt[c.id]=c.fmt||"";}
+  });
   Object.keys(CL.seenDirty).forEach(function(id){
     patch=patch||{};patch.seen=patch.seen||{};patch.seen[id]=CL.seenDirty[id];CL.state.seen[id]=CL.seenDirty[id];
   });
@@ -1440,7 +1467,7 @@ async function enterCloud(){
     var st=await CL.api.getUserState(CL.user.uid)||{};
     var base=st.baseline;
     if(!base){base=Date.now();cloudWrite(CL.api.setUserState(CL.user.uid,{baseline:base}));}
-    CL.state={known:st.known||{},seen:st.seen||{},stats:st.stats||{},baseline:base};
+    CL.state={known:st.known||{},seen:st.seen||{},stats:st.stats||{},fmt:st.fmt||{},baseline:base};
     var meta=null;try{meta=await CL.api.getMeta("deck");}catch(e){}
     CL.localDismissed=dismissed;dismissed={};
     if(meta&&Array.isArray(meta.dismissed))meta.dismissed.forEach(function(k){dismissed[k]=1;});
