@@ -121,6 +121,23 @@ textarea{resize:vertical;min-height:84px}
 .panel.flash{animation:flash .6s ease-out}
 @keyframes flash{0%{box-shadow:0 0 0 0 rgba(255,212,59,.9)}100%{box-shadow:0 0 0 22px rgba(255,212,59,0)}}
 @media (prefers-reduced-motion:reduce){.celebrate .bit,.celebrate .ring{display:none}.celebrate .pop{animation-duration:.6s}}
+.setup-h{font-size:15px;font-weight:700;margin:0 0 8px}
+.setup .cats .catbtn{font-size:15px;padding:8px 16px}
+.toggles{display:flex;gap:10px}
+.tgl{flex:1 1 0;appearance:none;font:inherit;text-align:left;border:1px solid var(--line);background:var(--card);color:var(--ink);
+  border-radius:12px;padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:10px}
+.tgl .ic{font-size:22px;line-height:1}
+.tgl .tx{display:flex;flex-direction:column;line-height:1.3}
+.tgl .tx b{font-size:15px}.tgl .tx span{font-size:12px;color:var(--mute)}
+.tgl[aria-pressed="true"]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--card))}
+.tgl[aria-pressed="true"] .tx span{color:var(--accent);font-weight:700}
+.startbtn{width:100%;padding:16px;font-size:18px;border-radius:12px}
+details.adv{border-top:1px solid var(--line);padding-top:12px}
+details.adv summary{cursor:pointer;font-size:14px;color:var(--mute);list-style:none}
+details.adv summary::-webkit-details-marker{display:none}
+details.adv summary::before{content:"▸ ";}
+details.adv[open] summary::before{content:"▾ ";}
+details.adv>.stack{margin-top:14px}
 .grouphead{font-size:13px;font-weight:600;color:var(--mute);margin:18px 0 8px;letter-spacing:.04em}
 .imgs{display:flex;flex-direction:column;gap:10px;margin-top:12px}
 .qimg{display:block;max-width:100%;max-height:340px;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;background:#fff}
@@ -162,7 +179,7 @@ kbd{font:inherit;font-size:11px;border:1px solid var(--line);border-radius:4px;p
     <button role="tab" data-tab="io">まとめて追加・書き出し</button>
   </nav>
   <main id="app"></main>
-  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19j（カードごとの出題形式）</footer>
+  <footer class="hint" style="text-align:center;margin-top:28px">版：2026-11-19k（シンプルな出題画面・当たり音）</footer>
 </div>
 <div id="toast" class="toast" hidden></div>
 
@@ -655,19 +672,36 @@ function pickChoice(i){
 }
 /* ---- correct-answer effects ---- */
 var audioCtx=null;
-function chime(streak){
+/* slot-machine "jackpot" sound, synthesised with Web Audio */
+function jackpot(streak,preview){
   if(!S.sfx)return;
   try{
     audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
-    var notes=streak>=5?[523,659,784,1047,1319]:[659,784,1047];
-    notes.forEach(function(f,k){
-      var o=audioCtx.createOscillator(),g=audioCtx.createGain(),t=audioCtx.currentTime+k*0.07;
-      o.type="triangle";o.frequency.value=f;
-      g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.18,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+0.28);
-      o.connect(g);g.connect(audioCtx.destination);o.start(t);o.stop(t+0.3);
-    });
+    if(audioCtx.state==="suspended")audioCtx.resume();
+    var ac=audioCtx,t0=ac.currentTime+0.01;
+    var out=ac.createDynamicsCompressor();out.connect(ac.destination);
+    var master=ac.createGain();master.gain.value=0.5;master.connect(out);
+    function tone(f,t,d,type,vol,slideTo){
+      var o=ac.createOscillator(),g=ac.createGain();
+      o.type=type||"square";o.frequency.setValueAtTime(f,t);
+      if(slideTo)o.frequency.exponentialRampToValueAtTime(slideTo,t+d);
+      g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol||0.25,t+0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+d);
+      o.connect(g);g.connect(master);o.start(t);o.stop(t+d+0.02);
+    }
+    // reels stopping: fast rising blips
+    var blips=preview?6:10,step=0.032,t=t0;
+    for(var i=0;i<blips;i++){tone(440*Math.pow(2,i/6),t,0.05,"square",0.16);t+=step;}
+    // coin "chi-ching" bursts (more with a longer streak)
+    var coins=preview?2:Math.min(3+Math.floor(streak/2),8);
+    for(var k=0;k<coins;k++){tone(988,t,0.06,"square",0.22);tone(1319,t+0.06,0.22,"square",0.22);t+=0.11;}
+    // fanfare chord with shimmer
+    var chord=streak>=5?[523,659,784,1047,1319]:[523,659,784,1047];
+    chord.forEach(function(f){tone(f,t,0.55,"sawtooth",0.09);tone(f*2,t,0.45,"triangle",0.05);});
+    for(var j=0;j<8;j++)tone(2093+j*90,t+0.04+j*0.045,0.08,"triangle",0.06);
   }catch(e){}
 }
+function chime(streak){jackpot(streak,false);}
 var WORDS=["正解！","いいね！","その調子！","さすが！","完璧！"];
 function celebrate(streak,big){
   chime(streak);
@@ -800,45 +834,52 @@ function quizSetup(){
     return h("button",{class:"catbtn","aria-pressed":S.opts.cats.indexOf(k)>=0?"true":"false",
       onclick:function(){toggle(k);}},k,h("small",null,counts[k]));
   });
-  return h("div",{class:"panel stack"},
-    h("div",{class:"stats"},
-      h("div",{class:"stat"},h("b",null,S.cards.length),h("span",null,"カード総数")),
-      h("div",{class:"stat"},h("b",null,known),h("span",null,"覚えた")),
-      h("div",{class:"stat"},h("b",null,S.cards.length-known),h("span",null,"まだ"))),
+  function tgl(icon,title,on,set){
+    return h("button",{class:"tgl","aria-pressed":on?"true":"false",onclick:function(){set(!on);render();}},
+      h("span",{class:"ic"},icon),h("span",{class:"tx"},h("b",null,title),h("span",null,on?"オン":"オフ")));
+  }
+  /* settings that differ from the defaults, shown on the folded section */
+  var changed=0;
+  if(S.opts.mode!=="auto")changed++;if(S.opts.order!=="random")changed++;if(S.opts.exam)changed++;
+  if(S.opts.review)changed++;if(S.opts.only)changed++;if(S.opts.onlyNew)changed++;if(S.opts.reverse)changed++;if(S.opts.tags.length)changed++;
+  var adv=h("details",{class:"adv"},
+    h("summary",null,"詳しい設定"+(changed?"（"+changed+"件 変更中）":"")),
+    h("div",{class:"stack"},
+      h("label",{class:"field"},h("span",null,"答え方"),
+        h("select",{"aria-label":"答え方",onchange:function(e){S.opts.mode=e.target.value;try{localStorage.setItem("ichimon-itto-mode",S.opts.mode);}catch(x){}render();}},
+          [["auto","自動：答えが一言なら思い出す、長ければ4択"],["mc","すべて4択"],["recall","すべて思い出す（4択なし）"]].map(function(o){
+            var el=h("option",{value:o[0]},o[1]);if(S.opts.mode===o[0])el.selected=true;return el;}))),
+      h("div",{class:"row"},
+        h("label",{class:"field",style:"flex:1 1 150px"},h("span",null,"出題順"),
+          selectEl([["random","ランダム"],["few","解いた回数が少ない順"],["weak","正答率が低い順"],["exam","国試での出題が多い順"]],S.opts.order,function(v){S.opts.order=v;render();})),
+        h("label",{class:"field",style:"flex:1 1 150px"},h("span",null,"国試での出題回数"),
+          selectEl([["0","すべて"],["1","1回以上出た"],["2","2回以上出た"],["3","3回以上出た"]],String(S.opts.exam),function(v){S.opts.exam=+v;render();})),
+        h("label",{class:"field",style:"flex:1 1 150px"},h("span",null,"問題チェック"),
+          selectEl([["","すべて"],["unchecked","未チェックだけ（見直し用）"],["checked","問題OKだけ"]],S.opts.review,function(v){S.opts.review=v;render();}))),
+      quizTagChips(),
+      h("label",{class:"check"},
+        h("input",{type:"checkbox",checked:S.opts.only,onchange:function(e){S.opts.only=e.target.checked;render();}}),
+        "「まだ」のカードだけ出す"),
+      flagged().length?h("label",{class:"check"},
+        h("input",{type:"checkbox",checked:S.opts.onlyNew,onchange:function(e){S.opts.onlyNew=e.target.checked;render();}}),
+        "新着・更新されたカードだけ出す（",h("b",null,flagged().length),"枚）"):null,
+      h("label",{class:"check"},
+        h("input",{type:"checkbox",checked:S.opts.reverse,onchange:function(e){S.opts.reverse=e.target.checked;render();}}),
+        "答えから質問を当てる（逆出題）")));
+  if(S.advOpen)adv.open=true;
+  adv.addEventListener("toggle",function(){S.advOpen=adv.open;});
+  return h("div",{class:"panel stack setup"},
     h("div",null,
-      h("div",{class:"hint",style:"margin-bottom:6px"},"カテゴリ（複数選べます）"),
-      h("div",{class:"cats"},allBtn,chips)),
-    quizTagChips(),
-    h("label",{class:"check"},
-      h("input",{type:"checkbox",checked:S.opts.only,onchange:function(e){S.opts.only=e.target.checked;render();}}),
-      "「まだ」のカードだけ出す"),
-    flagged().length?h("label",{class:"check"},
-      h("input",{type:"checkbox",checked:S.opts.onlyNew,onchange:function(e){S.opts.onlyNew=e.target.checked;render();}}),
-      "新着・更新されたカードだけ出す（",h("b",null,flagged().length),"枚）"):null,
-    h("div",{class:"row"},
-      h("label",{class:"field",style:"flex:1 1 150px"},h("span",null,"出題順"),
-        selectEl([["random","ランダム"],["few","解いた回数が少ない順"],["weak","正答率が低い順"],["exam","国試での出題が多い順"]],S.opts.order,function(v){S.opts.order=v;render();})),
-      h("label",{class:"field",style:"flex:1 1 150px"},h("span",null,"国試での出題回数"),
-        selectEl([["0","すべて"],["1","1回以上出た"],["2","2回以上出た"],["3","3回以上出た"]],String(S.opts.exam),function(v){S.opts.exam=+v;render();})),
-      h("label",{class:"field",style:"flex:1 1 150px"},h("span",null,"問題チェック"),
-        selectEl([["","すべて"],["unchecked","未チェックだけ（見直し用）"],["checked","問題OKだけ"]],S.opts.review,function(v){S.opts.review=v;render();}))),
-    h("label",{class:"check"},
-      h("input",{type:"checkbox",checked:S.fx,onchange:function(e){S.fx=e.target.checked;try{localStorage.setItem("ichimon-itto-fx",S.fx?"1":"0");}catch(x){}}}),
-      "正解したときの演出（「本質！」と紙吹雪）"),
-    h("label",{class:"check"},
-      h("input",{type:"checkbox",checked:S.sfx,onchange:function(e){S.sfx=e.target.checked;try{localStorage.setItem("ichimon-itto-sfx",S.sfx?"1":"0");}catch(x){}}}),
-      "正解したときの効果音"),
-    h("label",{class:"check"},
-      h("input",{type:"checkbox",checked:S.opts.reverse,onchange:function(e){S.opts.reverse=e.target.checked;render();}}),
-      "答えから質問を当てる（逆出題）"),
-    h("label",{class:"field"},h("span",null,"答え方"),
-      h("select",{"aria-label":"答え方",onchange:function(e){S.opts.mode=e.target.value;try{localStorage.setItem("ichimon-itto-mode",S.opts.mode);}catch(x){}render();}},
-        [["auto","自動：答えが一言なら思い出す、長ければ4択"],["mc","すべて4択"],["recall","すべて思い出す（4択なし）"]].map(function(o){
-          var el=h("option",{value:o[0]},o[1]);if(S.opts.mode===o[0])el.selected=true;return el;}))),
-    h("button",{class:"btn primary",disabled:n===0,onclick:function(){startQuiz();}},
-      n===0?"出題できるカードがありません":"スタート（"+n+"問）"));
+      h("div",{class:"setup-h"},"出題する分野"),
+      h("div",{class:"cats"},allBtn,chips),
+      h("div",{class:"hint",style:"margin-top:8px"},"覚えた "+known+" / "+S.cards.length+"枚")),
+    h("div",{class:"toggles"},
+      tgl("🔊","効果音",S.sfx,function(v){S.sfx=v;try{localStorage.setItem("ichimon-itto-sfx",v?"1":"0");}catch(x){}if(v)jackpot(1,true);}),
+      tgl("🎉","演出",S.fx,function(v){S.fx=v;try{localStorage.setItem("ichimon-itto-fx",v?"1":"0");}catch(x){}})),
+    h("button",{class:"btn primary startbtn",disabled:n===0,onclick:function(){startQuiz();}},
+      n===0?"出題できるカードがありません":"スタート（"+n+"問）"),
+    adv);
 }
-/* tags of the cards in the selected categories, most used first; long lists fold */
 function selectEl(opts,val,onchange){
   return h("select",{onchange:function(e){onchange(e.target.value);}},opts.map(function(o){
     var el=h("option",{value:o[0]},o[1]);if(o[0]===val)el.selected=true;return el;}));
