@@ -73,6 +73,9 @@ textarea{resize:vertical;min-height:84px}
   border-radius:999px;padding:6px 14px;cursor:pointer}
 .catbtn[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
 .catbtn small{opacity:.75;margin-left:4px}
+.tagbtn{font-size:13px;padding:4px 11px}
+.chip.tag{background:transparent;border:1px solid var(--line);cursor:pointer}
+.chip.tag:hover{border-color:var(--mute)}
 .grouphead{font-size:13px;font-weight:600;color:var(--mute);margin:18px 0 8px;letter-spacing:.04em}
 .imgs{display:flex;flex-direction:column;gap:10px;margin-top:12px}
 .qimg{display:block;max-width:100%;max-height:340px;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;background:#fff}
@@ -123,7 +126,7 @@ kbd{font:inherit;font-size:11px;border:1px solid var(--line);border-radius:4px;p
 var LS_KEY="ichimon-itto-v1";
 var MAX_IMGS=3;
 var S={cards:[],tab:"quiz",editing:null,editNode:null,search:"",tagFilter:"",quiz:null,
-  opts:{cats:[],only:false,reverse:false},loaded:false,confirmKey:null};
+  opts:{cats:[],tags:[],only:false,reverse:false},tagFilterT:"",loaded:false,confirmKey:null};
 
 /* ---------- helpers ---------- */
 function h(tag,props){
@@ -166,8 +169,19 @@ function sanitize(c){
   return {id:typeof c.id==="string"&&c.id?c.id:uid(),
     q:String(c.q==null?"":c.q),a:String(c.a==null?"":c.a),e:String(c.e==null?"":c.e),
     tag:String(c.tag==null?"":c.tag).trim(),known:c.known===true,imgs:idList(c.imgs),qimgs:idList(c.qimgs),
-    src:typeof c.src==="string"?c.src:"",edited:c.edited===true,catSet:c.catSet===true};
+    src:typeof c.src==="string"?c.src:"",edited:c.edited===true,catSet:c.catSet===true,
+    tags:cleanTags(c.tags),tagSet:c.tagSet===true};
 }
+function cleanTags(v){
+  if(typeof v==="string")v=parseTags(v);
+  if(!Array.isArray(v))return [];
+  var out=[];
+  v.forEach(function(t){t=String(t).replace(/^#/,"").trim();if(t&&t.length<=30&&out.indexOf(t)<0)out.push(t);});
+  return out.slice(0,12);
+}
+function parseTags(str){return String(str||"").split(/[,、，\s#＃　]+/).filter(Boolean);}
+function tagCounts(){var m={};S.cards.forEach(function(c){c.tags.forEach(function(t){m[t]=(m[t]||0)+1;});});return m;}
+function tagList(){var m=tagCounts();return Object.keys(m).sort(function(a,b){return m[b]-m[a]||a.localeCompare(b,"ja");});}
 function allImgs(c){return (c.qimgs||[]).concat(c.imgs||[]);}
 function catOf(c){return c.tag||"未分類";}
 function catCounts(){var m={};S.cards.forEach(function(c){var k=catOf(c);m[k]=(m[k]||0)+1;});return m;}
@@ -355,6 +369,7 @@ function render(){
 function pool(){
   return S.cards.filter(function(c){
     if(S.opts.cats.length&&S.opts.cats.indexOf(catOf(c))<0)return false;
+    if(S.opts.tags.length&&!c.tags.some(function(t){return S.opts.tags.indexOf(t)>=0;}))return false;
     if(S.opts.only&&c.known)return false;
     return true;
   });
@@ -426,6 +441,8 @@ function quizSetup(){
   var known=S.cards.filter(function(c){return c.known;}).length;
   var counts=catCounts();
   S.opts.cats=S.opts.cats.filter(function(k){return counts[k];});
+  var tcounts=tagCounts();
+  S.opts.tags=S.opts.tags.filter(function(k){return tcounts[k];});
   var n=pool().length;
   function toggle(k){
     var i=S.opts.cats.indexOf(k);
@@ -446,6 +463,13 @@ function quizSetup(){
     h("div",null,
       h("div",{class:"hint",style:"margin-bottom:6px"},"カテゴリ（複数選べます）"),
       h("div",{class:"cats"},allBtn,chips)),
+    tagList().length?h("div",null,
+      h("div",{class:"hint",style:"margin-bottom:6px"},"タグで絞り込む（どれかが付いたカード）"),
+      h("div",{class:"cats"},tagList().map(function(t){
+        return h("button",{class:"catbtn tagbtn","aria-pressed":S.opts.tags.indexOf(t)>=0?"true":"false",onclick:function(){
+          var i=S.opts.tags.indexOf(t);if(i<0)S.opts.tags.push(t);else S.opts.tags.splice(i,1);render();
+        }},"#"+t,h("small",null,tcounts[t]));
+      }))):null,
     h("label",{class:"check"},
       h("input",{type:"checkbox",checked:S.opts.only,onchange:function(e){S.opts.only=e.target.checked;render();}}),
       "「まだ」のカードだけ出す"),
@@ -477,15 +501,17 @@ function viewCards(){
   var aIn=h("input",{type:"text",id:"na",placeholder:"答え（端的に）　例：Babesia gibsoni"});
   var eIn=h("textarea",{id:"ne",placeholder:"解説（任意）　例：他との区別点、理由、覚え方など",rows:"3"});
   var tIn=h("input",{type:"text",id:"nt",placeholder:"カテゴリ（任意） 例：寄生虫学",list:"taglist",value:S.tagFilter||""});
+  var gIn=h("input",{type:"text",id:"ng",placeholder:"タグ（任意・スペース区切り） 例：頻出 語呂 ネコ"});
   var qPicker=imagePicker([]);
   var picker=imagePicker([]);
   var dl=h("datalist",{id:"taglist"},tags().map(function(t){return h("option",{value:t});}));
   function add(){
     var q=qIn.value.trim(),a=aIn.value.trim();
     if(!q||!a){toast("質問と答えの両方を入力してください");return;}
-    S.cards.unshift({id:uid(),q:q,a:a,e:eIn.value.trim(),tag:tIn.value.trim(),known:false,imgs:picker.ids(),qimgs:qPicker.ids(),src:""});
+    S.cards.unshift({id:uid(),q:q,a:a,e:eIn.value.trim(),tag:tIn.value.trim(),known:false,imgs:picker.ids(),qimgs:qPicker.ids(),src:"",
+      tags:cleanTags(gIn.value),tagSet:false,edited:false,catSet:false});
     persist();
-    qIn.value="";aIn.value="";eIn.value="";picker.reset();qPicker.reset();
+    qIn.value="";aIn.value="";eIn.value="";gIn.value="";picker.reset();qPicker.reset();
     renderList();
     dl.textContent="";tags().forEach(function(t){dl.append(h("option",{value:t}));});
     qIn.focus();
@@ -510,10 +536,14 @@ function viewCards(){
       h("label",{class:"field"},h("span",null,"解説（任意・答えの下に小さな字で表示）"),eIn),
       h("div",{class:"field"},h("span",{class:"hint",style:"display:block;margin-bottom:2px"},"解説の画像（任意・答えのあとに表示）"),picker.el),
       h("label",{class:"field"},h("span",null,"カテゴリ"),tIn),dl,
+      h("label",{class:"field"},h("span",null,"タグ（複数可）"),gIn),
       h("div",{class:"row"},
         h("button",{class:"btn primary",onclick:add},"追加"),
         h("span",{class:"hint"},"解説の欄で ",h("kbd",null,"Ctrl/⌘"),"+",h("kbd",null,"Enter"),"でも追加"))),
-    h("div",{class:"row"},h("div",{style:"flex:2 1 160px"},search),h("div",{style:"flex:1 1 140px"},tagSel)),
+    h("div",{class:"row"},h("div",{style:"flex:2 1 160px"},search),h("div",{style:"flex:1 1 140px"},tagSel),
+      tagList().length?h("div",{style:"flex:1 1 120px"},h("select",{"aria-label":"タグで絞り込み",onchange:function(e){S.tagFilterT=e.target.value;renderList();}},
+        h("option",{value:""},"すべてのタグ"),
+        tagList().map(function(t){var o=h("option",{value:t},"#"+t);if(t===S.tagFilterT)o.selected=true;return o;}))):null),
     listBox,
     renamePanel());
   setTimeout(renderList,0);
@@ -525,8 +555,9 @@ function renderList(){
   var s=S.search.trim().toLowerCase();
   var items=S.cards.filter(function(c){
     if(S.tagFilter&&catOf(c)!==S.tagFilter)return false;
+    if(S.tagFilterT&&c.tags.indexOf(S.tagFilterT)<0)return false;
     if(!s)return true;
-    return (c.q+" "+c.a+" "+c.e+" "+c.tag).toLowerCase().indexOf(s)>=0;
+    return (c.q+" "+c.a+" "+c.e+" "+c.tag+" "+c.tags.join(" ")).toLowerCase().indexOf(s.replace(/^#/,""))>=0;
   });
   if(!items.length){
     box.append(h("div",{class:"empty"},S.cards.length?"該当するカードがありません":"まだカードがありません"));
@@ -570,6 +601,8 @@ function viewItem(c){
     })):null,
     h("div",{class:"meta"},
       h("span",{class:"chip"+(c.known?" ok":"")},c.known?"覚えた":"まだ"),
+      c.tags.map(function(t){return h("button",{class:"chip tag",type:"button",title:"このタグで絞り込む",onclick:function(){
+        S.tagFilterT=t;render();}},"#"+t);}),
       h("span",{class:"spacer"}),
       h("button",{class:"btn small",onclick:function(){S.editing=c.id;S.editNode=null;S.confirmKey=null;renderList();}},"編集"),
       delBtn));
@@ -579,6 +612,7 @@ function editItem(c){
   var a=h("textarea",{rows:"2","aria-label":"答え"},c.a);
   var e=h("textarea",{rows:"3","aria-label":"解説",placeholder:"解説（任意）"},c.e);
   var t=h("input",{type:"text",value:c.tag,placeholder:"カテゴリ","aria-label":"カテゴリ",list:"taglist"});
+  var g=h("input",{type:"text",value:c.tags.join(" "),placeholder:"タグ（スペース区切り）","aria-label":"タグ"});
   var qPicker=imagePicker(c.qimgs);
   var picker=imagePicker(c.imgs);
   return h("div",{class:"item stack"},
@@ -588,6 +622,7 @@ function editItem(c){
     h("div",{class:"hint"},"解説"),e,
     h("div",{class:"hint"},"解説の画像"),picker.el,
     h("div",{class:"hint"},"カテゴリ"),t,
+    h("div",{class:"hint"},"タグ（スペース区切り）"),g,
     h("div",{class:"row"},
       h("button",{class:"btn small primary",onclick:function(){
         var nq=q.value.trim(),na=a.value.trim();
@@ -595,6 +630,8 @@ function editItem(c){
         var ne=e.value.trim(),nt=t.value.trim(),ni=picker.ids(),nqi=qPicker.ids();
         if(nq!==c.q||na!==c.a||ne!==c.e||ni.join()!==c.imgs.join()||nqi.join()!==c.qimgs.join())c.edited=true;
         if(nt!==c.tag)c.catSet=true;
+        var ng=cleanTags(g.value);
+        if(ng.join("\u0000")!==c.tags.join("\u0000")){c.tags=ng;c.tagSet=true;}
         c.q=nq;c.a=na;c.e=ne;c.tag=nt;c.imgs=ni;c.qimgs=nqi;
         picker.commit();qPicker.commit();
         S.editing=null;S.editNode=null;persist();renderList();
@@ -681,23 +718,26 @@ async function importDeck(d,btn){
       if(!validCard(c))continue;
       var sid=typeof c.id==="string"?c.id:"";
       var q=c.q.trim(),a=c.a.trim(),e=String(c.e||"").trim(),cat=String(c.cat||c.tag||deck.cat||deck.tag||"").trim();
+      var tg=cleanTags(c.tags);
       var hit=(sid&&bySrc[sid])||byKey[q+"\u0000"+a]||byQ[q]||null;
       if(!hit&&Array.isArray(c.was))for(var j=0;j<c.was.length&&!hit;j++)hit=byQ[c.was[j]]||null;
       if(!hit&&sid&&dismissed[sid]){skip++;continue;}   /* deleted by the user: do not bring back */
       if(hit){
         if(sid)hit.src=sid;
+        var tagChanged=!hit.tagSet&&hit.tags.join("\u0000")!==tg.join("\u0000");
+        if(!hit.tagSet)hit.tags=tg;
         if(hit.edited){                                  /* edited by the user: keep their version */
           if(!hit.catSet&&hit.tag!==cat){hit.tag=cat;}
           kept++;continue;
         }
-        var changed=hit.q!==q||hit.a!==a||hit.e!==e||(!hit.catSet&&hit.tag!==cat);
+        var changed=tagChanged||hit.q!==q||hit.a!==a||hit.e!==e||(!hit.catSet&&hit.tag!==cat);
         hit.q=q;hit.a=a;hit.e=e;if(!hit.catSet)hit.tag=cat;
         if(!hit.qimgs.length&&Array.isArray(c.qimg)&&c.qimg.length){hit.qimgs=await deckImages(c.qimg);changed=true;}
         if(!hit.imgs.length&&Array.isArray(c.img)&&c.img.length){hit.imgs=await deckImages(c.img);changed=true;}
         if(changed)upd++;else same++;
         continue;
       }
-      var nc={id:uid(),q:q,a:a,e:e,tag:cat,known:false,src:sid,
+      var nc={id:uid(),q:q,a:a,e:e,tag:cat,known:false,src:sid,tags:tg,tagSet:false,edited:false,catSet:false,
         qimgs:await deckImages(c.qimg),imgs:await deckImages(c.img)};
       if(sid)bySrc[sid]=nc;byQ[q]=nc;byKey[q+"\u0000"+a]=nc;
       add.push(nc);
@@ -737,7 +777,7 @@ function parseBulk(text,tag){
     var parts=line.split(sep);
     var q=parts[0].trim(),a=(parts[1]||"").trim(),e=parts.slice(2).join(sep).trim();
     if(!q||!a){skipped++;return;}
-    out.push({id:uid(),q:q,a:a,e:e,tag:tag,known:false,imgs:[],qimgs:[],src:""});
+    out.push({id:uid(),q:q,a:a,e:e,tag:tag,known:false,imgs:[],qimgs:[],src:"",tags:[],tagSet:false,edited:false,catSet:false});
   });
   return {cards:out,skipped:skipped};
 }
@@ -760,7 +800,7 @@ async function importList(list){
     if(!validCard(c))continue;
     added.push({id:uid(),q:c.q.trim(),a:c.a.trim(),e:String(c.e||"").trim(),
       tag:String(c.tag||c.cat||"").trim(),known:c.known===true,src:typeof c.src==="string"?c.src:"",
-      edited:c.edited===true,catSet:c.catSet===true,
+      edited:c.edited===true,catSet:c.catSet===true,tags:cleanTags(c.tags),tagSet:c.tagSet===true,
       imgs:await dataImgs(c.imgs),qimgs:await dataImgs(c.qimgs)});
   }
   S.cards=S.cards.concat(added);
@@ -786,7 +826,7 @@ async function exportFile(btn){
         var b2=await imgGet(c.qimgs[k]).catch(function(){return null;});
         if(b2)qimgs.push(await blobToDataURL(b2));
       }
-      out.push({q:c.q,a:c.a,e:c.e,tag:c.tag,known:c.known,src:c.src,edited:c.edited,catSet:c.catSet,imgs:imgs,qimgs:qimgs});
+      out.push({q:c.q,a:c.a,e:c.e,tag:c.tag,known:c.known,src:c.src,edited:c.edited,catSet:c.catSet,tags:c.tags,tagSet:c.tagSet,imgs:imgs,qimgs:qimgs});
     }
     var blob=new Blob([JSON.stringify({app:"ichimon-itto",version:3,cards:out,dismissed:Object.keys(dismissed)})],{type:"application/json"});
     var url=URL.createObjectURL(blob);
@@ -801,7 +841,7 @@ function viewIO(){
   var bulk=h("textarea",{rows:"7",placeholder:"質問 | 答え | 解説（解説は省略可）\n質問 | 答え\n（タブ区切り、全角｜区切りも可。Excelやスプレッドシートからの貼り付けもOK）"});
   var bulkTag=h("input",{type:"text",placeholder:"まとめて付けるカテゴリ（任意）",list:"taglist2"});
   var jsonOut=h("textarea",{rows:"6",readonly:true,"aria-label":"書き出しデータ（文字のみ）"});
-  jsonOut.value=JSON.stringify(S.cards.map(function(c){return {q:c.q,a:c.a,e:c.e,tag:c.tag,known:c.known,src:c.src};}),null,1);
+  jsonOut.value=JSON.stringify(S.cards.map(function(c){return {q:c.q,a:c.a,e:c.e,tag:c.tag,known:c.known,src:c.src,tags:c.tags};}),null,1);
   var jsonIn=h("textarea",{rows:"5",placeholder:"書き出したデータをここに貼り付けて、追加できます"});
   var fileIn=h("input",{type:"file",accept:"application/json,.json",hidden:true});
   fileIn.addEventListener("change",async function(){
